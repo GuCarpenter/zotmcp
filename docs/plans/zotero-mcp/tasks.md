@@ -212,49 +212,49 @@ modules that make the spec's structural guarantees hold.
 
 ## Phase 7 — Writes
 
-- [ ] 7.1 `src/services/importService.ts`: identifier import (DOI/ISBN/arXiv/
+- [x] 7.1 `src/services/importService.ts`: identifier import (DOI/ISBN/arXiv/
       PMID/URL) through Zotero's own translators; return the created item with
       URIs. Covers: W-1.
-- [ ] 7.2 `importService`: local file as imported-file or linked-file attachment
+- [x] 7.2 `importService`: local file as imported-file or linked-file attachment
       on a parent. Covers: W-2.
-- [ ] 7.3 `importService`: manual creation with field validation against the item
+- [x] 7.3 `importService`: manual creation with field validation against the item
       type, rejecting an invalid field **with the list of valid fields**.
       Covers: W-3.
-- [ ] 7.4 `src/tools/libraryImport.ts`: `kind: identifiers | files | manual`,
+- [x] 7.4 `src/tools/libraryImport.ts`: `kind: identifiers | files | manual`,
       optional target collection. Covers: W-1..W-3.
-- [ ] 7.5 `src/services/libraryMutation/metadata.ts`: field and creator updates
+- [x] 7.5 `src/services/libraryMutation/metadata.ts`: field and creator updates
       reporting each changed field, saved with the `editMetadata` undo label.
       Note Zotero 10 throws on `setType`/`setField('itemTypeID')` across the
       regular/attachment/note/annotation boundary. Covers: W-4, W-14, ND-1.
-- [ ] 7.6 `src/services/libraryMutation/tags.ts`: item tags add / remove / set
+- [x] 7.6 `src/services/libraryMutation/tags.ts`: item tags add / remove / set
       (full replace). Covers: W-6.
-- [ ] 7.7 `src/services/libraryMutation/tagObject.ts`: library-wide tag rename /
+- [x] 7.7 `src/services/libraryMutation/tagObject.ts`: library-wide tag rename /
       merge / delete / set color. Covers: W-7.
-- [ ] 7.8 `src/services/libraryMutation/parent.ts`: reparent note or attachment,
+- [x] 7.8 `src/services/libraryMutation/parent.ts`: reparent note or attachment,
       or detach to top level. Covers: W-8.
-- [ ] 7.9 `src/services/libraryMutation/related.ts`: both `addRelatedItem` saves
+- [x] 7.9 `src/services/libraryMutation/related.ts`: both `addRelatedItem` saves
       inside **one** `Zotero.DB.executeTransaction`, so a second-side failure
       rolls back the first and no half-link can exist. Covers: W-9.
-- [ ] 7.10 `src/tools/libraryUpdate.ts`: `kind` facade + batch `operations[]`
+- [x] 7.10 `src/tools/libraryUpdate.ts`: `kind` facade + batch `operations[]`
       executed sequentially through the write queue with per-operation results;
       a multi-object operation stages one undo action so it undoes as a single
       step. Covers: W-4..W-9, W-14, E-2, ND-2.
-- [ ] 7.11 `src/services/collectionService.ts`: create (optional parent), rename,
+- [x] 7.11 `src/services/collectionService.ts`: create (optional parent), rename,
       move, delete with explicit `deleteItems` opt-in defaulting to leaving items
       in place; add/remove membership. Covers: W-10, W-11.
-- [ ] 7.12 `src/tools/collectionUpdate.ts`: action facade. Covers: W-10, W-11.
-- [ ] 7.13 `src/tools/libraryDelete.ts` + service: `mode: trash | restore |
+- [x] 7.12 `src/tools/collectionUpdate.ts`: action facade. Covers: W-10, W-11.
+- [x] 7.13 `src/tools/libraryDelete.ts` + service: `mode: trash | restore |
 merge` (merge into a designated master). Covers: W-12.
-- [ ] 7.14 `src/tools/attachmentUpdate.ts` + service: rename file on disk, relink
+- [x] 7.14 `src/tools/attachmentUpdate.ts` + service: rename file on disk, relink
       to a new path, delete (trash); `FileMissingError` when the file is absent.
       Zotero 10 rejects a stored-file path containing a slash. Covers: W-13, E-1.
-- [ ] 7.17 Every write path carries an undo label, and tools whose effect Zotero
+- [x] 7.17 Every write path carries an undo label, and tools whose effect Zotero
       cannot undo (item creation, permanent deletion) say so in their result.
       Covers: ND-1, ND-4.
-- [ ] 7.15 `test/unit/related.test.ts`: injected second-side failure leaves item A
+- [x] 7.15 `test/unit/related.test.ts`: injected second-side failure leaves item A
       unchanged — the regression test for the half-link bug both prior-art
       projects have. Covers: W-9.
-- [ ] 7.16 `test/unit/libraryUpdate.test.ts`: batch per-operation results,
+- [x] 7.16 `test/unit/libraryUpdate.test.ts`: batch per-operation results,
       including a mid-batch failure reporting exactly what applied.
       Covers: W-5, W-14.
 

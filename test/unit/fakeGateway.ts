@@ -30,6 +30,9 @@ export interface FakeItem {
   json?: Record<string, unknown>;
   note?: string;
   parentKey?: string;
+  tags?: string[];
+  collectionIDs?: number[];
+  related?: string[];
 }
 
 export interface FakeCollection {
@@ -83,6 +86,28 @@ export class FakeGateway implements ZoteroGateway {
     html: string;
     parentKey: string | null;
   }[] = [];
+  public importedIdentifiers: {
+    identifier: string;
+    collectionIDs: number[];
+  }[] = [];
+  public identifierFailures = new Map<string, string>();
+  public importedFiles: Record<string, unknown>[] = [];
+  public createdItems: Record<string, unknown>[] = [];
+  public fieldsByItemType = new Map<string, string[]>();
+  public invalidItemTypes = new Set<string>();
+  public tagOperations: {
+    op: string;
+    libraryID: number;
+    from: string;
+    to?: string | null;
+  }[] = [];
+  public createdCollections: Record<string, unknown>[] = [];
+  public savedCollections: {
+    key: string;
+    saveOptions: Record<string, unknown>;
+  }[] = [];
+  public erasedCollections: { key: string; deleteItems: boolean }[] = [];
+  public merges: { masterKey: string; otherKeys: string[] }[] = [];
   public cacheText = "";
   public sdtReader: SdtReader | null = null;
   public pdfText: { text?: string; pageChars?: number[] } | null = null;
@@ -106,6 +131,9 @@ export class FakeGateway implements ZoteroGateway {
       json: item.json ?? {},
       note: item.note ?? "",
       parentKey: item.parentKey,
+      tags: item.tags ?? [],
+      collectionIDs: item.collectionIDs ?? [],
+      related: item.related ?? [],
       key: item.key,
     };
     this.items.push(created);
@@ -210,6 +238,120 @@ export class FakeGateway implements ZoteroGateway {
       itemType: "annotation",
       libraryID: USER_LIBRARY_ID,
     } as unknown as Zotero.Item;
+  }
+
+  public async importByIdentifier(
+    identifier: string,
+    collectionIDs: number[],
+  ): Promise<Zotero.Item[]> {
+    this.importedIdentifiers.push({ identifier, collectionIDs });
+    const failure = this.identifierFailures.get(identifier);
+    if (failure) throw new Error(failure);
+    const created = this.addItem({
+      key: this.generateObjectKey(),
+      itemType: "journalArticle",
+      json: { title: `Resolved ${identifier}` },
+    });
+    return [toZoteroItem(created) as unknown as Zotero.Item];
+  }
+
+  public async importFile(input: {
+    path: string;
+    parentItemID: number;
+    linked: boolean;
+    title?: string;
+  }): Promise<Zotero.Item> {
+    this.importedFiles.push(input);
+    const created = this.addItem({
+      key: this.generateObjectKey(),
+      itemType: "attachment",
+      attachmentContentType: "application/pdf",
+    });
+    return toZoteroItem(created) as unknown as Zotero.Item;
+  }
+
+  public async createItem(input: {
+    itemType: string;
+    fields: Record<string, unknown>;
+    creators?: unknown[];
+    collectionIDs?: number[];
+  }): Promise<Zotero.Item> {
+    this.createdItems.push(input);
+    const created = this.addItem({
+      key: this.generateObjectKey(),
+      itemType: input.itemType,
+      json: input.fields,
+    });
+    return toZoteroItem(created) as unknown as Zotero.Item;
+  }
+
+  public getFieldsForItemType(itemType: string): string[] {
+    return this.fieldsByItemType.get(itemType) ?? ["title", "date", "extra"];
+  }
+
+  public isValidItemType(itemType: string): boolean {
+    return !this.invalidItemTypes.has(itemType);
+  }
+
+  public async renameTag(
+    libraryID: number,
+    from: string,
+    to: string,
+  ): Promise<void> {
+    this.tagOperations.push({ op: "rename", libraryID, from, to });
+  }
+
+  public async deleteTag(libraryID: number, tag: string): Promise<void> {
+    this.tagOperations.push({ op: "delete", libraryID, from: tag });
+  }
+
+  public async setTagColor(
+    libraryID: number,
+    tag: string,
+    color: string | false,
+  ): Promise<void> {
+    this.tagOperations.push({
+      op: "setColor",
+      libraryID,
+      from: tag,
+      to: color === false ? null : color,
+    });
+  }
+
+  public async createCollection(input: {
+    name: string;
+    parentCollectionID?: number;
+  }): Promise<Zotero.Collection> {
+    const created = this.addCollection({
+      key: this.generateObjectKey(),
+      name: input.name,
+    });
+    this.createdCollections.push(input);
+    return created as unknown as Zotero.Collection;
+  }
+
+  public async saveCollection(
+    collection: Zotero.Collection,
+    saveOptions: Record<string, unknown> = {},
+  ): Promise<void> {
+    this.savedCollections.push({ key: collection.key, saveOptions });
+  }
+
+  public async eraseCollection(
+    collection: Zotero.Collection,
+    deleteItems: boolean,
+  ): Promise<void> {
+    this.erasedCollections.push({ key: collection.key, deleteItems });
+  }
+
+  public async mergeItems(
+    master: Zotero.Item,
+    others: Zotero.Item[],
+  ): Promise<void> {
+    this.merges.push({
+      masterKey: master.key,
+      otherKeys: others.map((item) => item.key),
+    });
   }
 
   public async createNote(
@@ -335,9 +477,39 @@ function toZoteroItem(item: FakeItem) {
     isAnnotation: () => item.itemType === "annotation",
     isRegularItem: () =>
       item.itemType !== "attachment" && item.itemType !== "note",
-    getField: () => "",
+    getField: (field: string) => String((item.json ?? {})[field] ?? ""),
+    setField: (field: string, value: string) => {
+      item.json = { ...(item.json ?? {}), [field]: value };
+    },
     getCreators: () => [],
-    getTags: () => [],
+    getTags: () => (item.tags ?? []).map((tag) => ({ tag })),
+    addTag: (tag: string) => {
+      item.tags = [...new Set([...(item.tags ?? []), tag])];
+      return true;
+    },
+    removeTag: (tag: string) => {
+      item.tags = (item.tags ?? []).filter((existing) => existing !== tag);
+    },
+    setCreators: () => {},
+    addToCollection: (id: number) => {
+      item.collectionIDs = [...new Set([...(item.collectionIDs ?? []), id])];
+    },
+    removeFromCollection: (id: number) => {
+      item.collectionIDs = (item.collectionIDs ?? []).filter((c) => c !== id);
+    },
+    getCollections: () => item.collectionIDs ?? [],
+    addRelatedItem: (other: { key: string }) => {
+      const before = item.related ?? [];
+      if (before.includes(other.key)) return false;
+      item.related = [...before, other.key];
+      return true;
+    },
+    removeRelatedItem: (other: { key: string }) => {
+      const before = item.related ?? [];
+      if (!before.includes(other.key)) return false;
+      item.related = before.filter((key) => key !== other.key);
+      return true;
+    },
     getAttachments: () => item.attachmentIDs ?? [],
     getNotes: () => item.noteIDs ?? [],
     getAnnotations: () => [],
@@ -345,7 +517,9 @@ function toZoteroItem(item: FakeItem) {
     setNote: (html: string) => {
       item.note = html;
     },
-    setTags: () => {},
+    setTags: (tags: { tag: string }[]) => {
+      item.tags = tags.map((entry) => entry.tag);
+    },
     saveTx: async () => {},
     toJSON: () => item.json ?? {},
   };

@@ -1,0 +1,540 @@
+import { expect } from "chai";
+import { ItemResolver } from "../../src/services/itemResolver";
+import {
+  AttachmentService,
+  CollectionService,
+  DeleteService,
+  ImportService,
+} from "../../src/services/libraryWriteServices";
+import { MutationService } from "../../src/services/mutationService";
+import { WriteService } from "../../src/services/writeService";
+import { FakeGateway } from "./fakeGateway";
+
+describe("write services", function () {
+  let gateway: FakeGateway;
+  let resolver: ItemResolver;
+  let mutations: MutationService;
+  let writes: WriteService;
+  let collections: CollectionService;
+  let imports: ImportService;
+  let deletes: DeleteService;
+  let attachments: AttachmentService;
+
+  beforeEach(function () {
+    gateway = new FakeGateway();
+    resolver = new ItemResolver(gateway);
+    mutations = new MutationService(gateway);
+    writes = new WriteService(gateway, resolver, mutations);
+    collections = new CollectionService(gateway, resolver, mutations);
+    imports = new ImportService(gateway, resolver, mutations);
+    deletes = new DeleteService(gateway, resolver, mutations);
+    attachments = new AttachmentService(gateway, resolver, mutations);
+  });
+
+  describe("metadata", function () {
+    beforeEach(function () {
+      gateway.fieldsByItemType.set("journalArticle", ["title", "date", "DOI"]);
+      gateway.addItem({
+        key: "ABCD1234",
+        itemType: "journalArticle",
+        json: { title: "Old title" },
+      });
+    });
+
+    it("reports only the fields that actually changed", async function () {
+      const result = await writes.updateMetadata("ABCD1234", {
+        title: "New title",
+        DOI: "",
+      });
+
+      expect(result.changed).to.deep.equal(["title"]);
+      expect(gateway.savedItems[0].saveOptions.undoAction).to.equal(
+        "zotmcp-undo-edit-metadata",
+      );
+    });
+
+    it("saves nothing when no value differs", async function () {
+      const result = await writes.updateMetadata("ABCD1234", {
+        title: "Old title",
+      });
+      expect(result.changed).to.deep.equal([]);
+      expect(gateway.savedItems).to.have.length(0);
+    });
+
+    it("rejects a field the item type does not have, listing valid ones", async function () {
+      let error: any;
+      try {
+        await writes.updateMetadata("ABCD1234", { nameOfAct: "x" });
+      } catch (e) {
+        error = e;
+      }
+      expect(error?.code).to.equal("invalid_argument");
+      expect(error.message).to.include("DOI");
+      expect(error.message).to.include("journalArticle");
+    });
+
+    it("refuses to change an item's type, which Zotero 10 throws on", async function () {
+      for (const field of ["itemType", "itemTypeID"]) {
+        let error: any;
+        try {
+          await writes.updateMetadata("ABCD1234", { [field]: "book" });
+        } catch (e) {
+          error = e;
+        }
+        expect(error?.code, field).to.equal("invalid_argument");
+      }
+    });
+  });
+
+  describe("item tags", function () {
+    beforeEach(function () {
+      gateway.addItem({ key: "ABCD1234", tags: ["existing"] });
+      gateway.addItem({ key: "BCDE2345", tags: [] });
+    });
+
+    it("adds without touching existing tags", async function () {
+      const reports = await writes.updateTags(["ABCD1234"], "add", ["new"]);
+      expect(reports[0].changed).to.deep.equal(["tags"]);
+      const item = await resolver.resolveItem("ABCD1234");
+      expect(item.getTags().map((t) => t.tag)).to.deep.equal([
+        "existing",
+        "new",
+      ]);
+    });
+
+    it("set replaces the whole list, unlike add", async function () {
+      await writes.updateTags(["ABCD1234"], "set", ["only"]);
+      const item = await resolver.resolveItem("ABCD1234");
+      expect(item.getTags().map((t) => t.tag)).to.deep.equal(["only"]);
+    });
+
+    it("removes a tag", async function () {
+      await writes.updateTags(["ABCD1234"], "remove", ["existing"]);
+      const item = await resolver.resolveItem("ABCD1234");
+      expect(item.getTags()).to.deep.equal([]);
+    });
+
+    it("stages one undo step for a multi-item change", async function () {
+      await writes.updateTags(["ABCD1234", "BCDE2345"], "add", ["batch"]);
+      expect(gateway.stagedUndoActions).to.deep.equal([
+        { action: "zotmcp-undo-edit-tags", args: { count: 2 } },
+      ]);
+      expect(gateway.transactionCount).to.equal(1);
+    });
+
+    it("reports an item whose tags did not change", async function () {
+      const reports = await writes.updateTags(["ABCD1234"], "add", [
+        "existing",
+      ]);
+      expect(reports[0].changed).to.deep.equal([]);
+    });
+  });
+
+  describe("library-wide tag operations", function () {
+    it("renames a tag", async function () {
+      const result = await writes.updateTagObject("rename", {
+        tag: "ml",
+        newName: "machine learning",
+      });
+      expect(result.result).to.include("machine learning");
+      expect(gateway.tagOperations[0]).to.deep.include({ op: "rename" });
+    });
+
+    it("treats merge as a rename, which is how Zotero folds tags together", async function () {
+      await writes.updateTagObject("merge", { tag: "nlp", newName: "NLP" });
+      expect(gateway.tagOperations[0].op).to.equal("rename");
+    });
+
+    it("deletes and colours tags", async function () {
+      await writes.updateTagObject("delete", { tag: "draft" });
+      await writes.updateTagObject("setColor", {
+        tag: "important",
+        color: "#ff6666",
+      });
+      expect(gateway.tagOperations.map((op) => op.op)).to.deep.equal([
+        "delete",
+        "setColor",
+      ]);
+    });
+
+    it("requires newName for a rename", async function () {
+      let error: any;
+      try {
+        await writes.updateTagObject("rename", { tag: "ml" });
+      } catch (e) {
+        error = e;
+      }
+      expect(error?.code).to.equal("invalid_argument");
+    });
+  });
+
+  describe("reparenting", function () {
+    beforeEach(function () {
+      gateway.addItem({ key: "ABCD1234", id: 1, itemType: "journalArticle" });
+      gateway.addItem({ key: "NOTE0001", id: 2, itemType: "note" });
+      gateway.addItem({ key: "EFGH5678", id: 3, itemType: "attachment" });
+    });
+
+    it("attaches a note to an item", async function () {
+      const result = await writes.setParent("NOTE0001", "ABCD1234");
+      expect(result.changed[0]).to.include("ABCD1234");
+      expect(gateway.savedItems[0].saveOptions.undoAction).to.equal(
+        "zotmcp-undo-set-parent",
+      );
+    });
+
+    it("detaches with a null parent", async function () {
+      const result = await writes.setParent("EFGH5678", null);
+      expect(result.changed).to.deep.equal(["detached"]);
+    });
+
+    it("refuses to reparent a regular item", async function () {
+      let error: any;
+      try {
+        await writes.setParent("ABCD1234", null);
+      } catch (e) {
+        error = e;
+      }
+      expect(error?.code).to.equal("invalid_argument");
+    });
+
+    it("refuses a non-regular item as a parent", async function () {
+      let error: any;
+      try {
+        await writes.setParent("NOTE0001", "EFGH5678");
+      } catch (e) {
+        error = e;
+      }
+      expect(error.message).to.include("cannot be a parent");
+    });
+  });
+
+  describe("related links", function () {
+    beforeEach(function () {
+      gateway.addItem({ key: "ABCD1234", id: 1 });
+      gateway.addItem({ key: "BCDE2345", id: 2 });
+    });
+
+    it("writes both directions inside one transaction", async function () {
+      const result = await writes.updateRelated(
+        "ABCD1234",
+        ["BCDE2345"],
+        "add",
+      );
+
+      expect(result.linked).to.deep.equal(["BCDE2345"]);
+      // Both saves in one transaction is what prevents a half-link.
+      expect(gateway.transactionCount).to.equal(1);
+      expect(gateway.savedItems.map((s) => s.key)).to.deep.equal([
+        "ABCD1234",
+        "BCDE2345",
+      ]);
+    });
+
+    it("rolls back the first side when the transaction fails", async function () {
+      gateway.failTransactionCommit = true;
+
+      let error: any;
+      try {
+        await writes.updateRelated("ABCD1234", ["BCDE2345"], "add");
+      } catch (e) {
+        error = e;
+      }
+
+      // The caller learns it failed; Zotero's transaction discards both saves,
+      // so no item keeps a dangling relation.
+      expect(error?.message).to.include("simulated commit failure");
+    });
+
+    it("skips relating an item to itself", async function () {
+      const result = await writes.updateRelated(
+        "ABCD1234",
+        ["ABCD1234"],
+        "add",
+      );
+      expect(result.linked).to.deep.equal([]);
+      expect(result.skipped).to.deep.equal(["ABCD1234"]);
+    });
+
+    it("stages one undo step for the pair", async function () {
+      await writes.updateRelated("ABCD1234", ["BCDE2345"], "add");
+      expect(gateway.stagedUndoActions[0].action).to.equal(
+        "zotmcp-undo-edit-related",
+      );
+    });
+  });
+
+  describe("collections", function () {
+    it("creates a subcollection and reports non-undoability", async function () {
+      gateway.addCollection({ key: "PARENT01", id: 1, name: "Parent" });
+
+      const result = await collections.create("Child", "PARENT01");
+
+      expect(result.name).to.equal("Child");
+      expect(result.parentKey).to.equal("PARENT01");
+      expect(String(result.note)).to.include("not undoable");
+    });
+
+    it("renames and moves with undo labels", async function () {
+      gateway.addCollection({ key: "COLL0001", id: 1, name: "Old" });
+      gateway.addCollection({ key: "PARENT01", id: 2, name: "Parent" });
+
+      await collections.rename("COLL0001", "New");
+      await collections.move("COLL0001", "PARENT01");
+
+      expect(
+        gateway.savedCollections.every(
+          (entry) =>
+            entry.saveOptions.undoAction === "zotmcp-undo-move-collection",
+        ),
+      ).to.equal(true);
+    });
+
+    it("refuses to make a collection its own parent", async function () {
+      gateway.addCollection({ key: "COLL0001", id: 1 });
+      let error: any;
+      try {
+        await collections.move("COLL0001", "COLL0001");
+      } catch (e) {
+        error = e;
+      }
+      expect(error?.code).to.equal("invalid_argument");
+    });
+
+    it("leaves items in the library unless deleteItems is set", async function () {
+      gateway.addCollection({ key: "COLL0001", id: 1, name: "Doomed" });
+
+      const kept = await collections.remove("COLL0001", false);
+      expect(gateway.erasedCollections[0].deleteItems).to.equal(false);
+      expect(String(kept.note)).to.include("left in the library");
+
+      gateway.addCollection({ key: "COLL0002", id: 2 });
+      const trashed = await collections.remove("COLL0002", true);
+      expect(String(trashed.note)).to.include("trash");
+    });
+
+    it("adds and removes membership, reporting unchanged items", async function () {
+      gateway.addCollection({ key: "COLL0001", id: 7 });
+      gateway.addItem({ key: "ABCD1234", id: 1 });
+      gateway.addItem({ key: "BCDE2345", id: 2, collectionIDs: [7] });
+
+      const added = await collections.setMembership(
+        "COLL0001",
+        ["ABCD1234", "BCDE2345"],
+        "addItems",
+      );
+
+      expect(added.changed).to.deep.equal(["ABCD1234"]);
+      expect(added.unchanged).to.deep.equal(["BCDE2345"]);
+    });
+
+    it("refuses to file a note in a collection", async function () {
+      gateway.addCollection({ key: "COLL0001", id: 7 });
+      gateway.addItem({ key: "NOTE0001", itemType: "note" });
+
+      let error: any;
+      try {
+        await collections.setMembership("COLL0001", ["NOTE0001"], "addItems");
+      } catch (e) {
+        error = e;
+      }
+      expect(error?.code).to.equal("invalid_argument");
+    });
+  });
+
+  describe("imports", function () {
+    it("resolves identifiers and files them in a collection", async function () {
+      gateway.addCollection({ key: "COLL0001", id: 7 });
+
+      const result = await imports.byIdentifiers(["10.1000/xyz"], "COLL0001");
+
+      expect((result.created as unknown[]).length).to.equal(1);
+      expect(gateway.importedIdentifiers[0].collectionIDs).to.deep.equal([7]);
+    });
+
+    it("keeps successes when one identifier fails", async function () {
+      gateway.identifierFailures.set("bad", "not a DOI");
+
+      const result = await imports.byIdentifiers(["10.1000/ok", "bad"]);
+
+      expect((result.created as unknown[]).length).to.equal(1);
+      expect((result.failed as any[])[0].identifier).to.equal("bad");
+    });
+
+    it("attaches a file to a regular item", async function () {
+      gateway.addItem({ key: "ABCD1234", id: 1 });
+
+      const result = await imports.fromFiles(
+        ["/tmp/paper.pdf"],
+        "ABCD1234",
+        false,
+      );
+
+      expect(gateway.importedFiles[0].linked).to.equal(false);
+      expect((result.created as any[])[0].linkMode).to.equal("imported_file");
+    });
+
+    it("refuses an attachment parent that is not a regular item", async function () {
+      gateway.addItem({ key: "NOTE0001", itemType: "note" });
+      let error: any;
+      try {
+        await imports.fromFiles(["/tmp/x.pdf"], "NOTE0001", false);
+      } catch (e) {
+        error = e;
+      }
+      expect(error?.code).to.equal("invalid_argument");
+    });
+
+    it("validates manual fields against the item type", async function () {
+      gateway.fieldsByItemType.set("book", ["title", "publisher"]);
+
+      let error: any;
+      try {
+        await imports.manual([
+          { itemType: "book", fields: { title: "T", DOI: "x" } },
+        ]);
+      } catch (e) {
+        error = e;
+      }
+      expect(error?.code).to.equal("invalid_argument");
+      expect(error.message).to.include("publisher");
+    });
+
+    it("rejects an unknown item type", async function () {
+      gateway.invalidItemTypes.add("nonsense");
+      let error: any;
+      try {
+        await imports.manual([{ itemType: "nonsense", fields: {} }]);
+      } catch (e) {
+        error = e;
+      }
+      expect(error.message).to.include("nonsense");
+    });
+
+    it("creates a manual item", async function () {
+      gateway.fieldsByItemType.set("book", ["title"]);
+      const result = await imports.manual([
+        { itemType: "book", fields: { title: "A book" } },
+      ]);
+      expect((result.created as any[])[0].itemType).to.equal("book");
+    });
+  });
+
+  describe("trash, restore and merge", function () {
+    beforeEach(function () {
+      gateway.addItem({ key: "ABCD1234", id: 1, itemType: "journalArticle" });
+      gateway.addItem({ key: "BCDE2345", id: 2, itemType: "journalArticle" });
+    });
+
+    it("trashes with one undo step and says it is reversible", async function () {
+      const result = await deletes.trash(["ABCD1234", "BCDE2345"]);
+
+      expect(result.trashed).to.deep.equal(["ABCD1234", "BCDE2345"]);
+      expect(gateway.stagedUndoActions[0]).to.deep.equal({
+        action: "zotmcp-undo-trash",
+        args: { count: 2 },
+      });
+      expect(String(result.note)).to.include("undoable");
+    });
+
+    it("restores trashed items", async function () {
+      const result = await deletes.restore(["ABCD1234"]);
+      expect(result.restored).to.deep.equal(["ABCD1234"]);
+      expect(gateway.stagedUndoActions[0].action).to.equal(
+        "zotmcp-undo-restore",
+      );
+    });
+
+    it("merges duplicates into a master and warns it is permanent", async function () {
+      const result = await deletes.merge("ABCD1234", ["BCDE2345"]);
+
+      expect(gateway.merges[0]).to.deep.equal({
+        masterKey: "ABCD1234",
+        otherKeys: ["BCDE2345"],
+      });
+      expect(String(result.note)).to.include("not undoable");
+    });
+
+    it("refuses to merge across item types", async function () {
+      gateway.addItem({ key: "BOOK0001", id: 3, itemType: "book" });
+      let error: any;
+      try {
+        await deletes.merge("ABCD1234", ["BOOK0001"]);
+      } catch (e) {
+        error = e;
+      }
+      expect(error.message).to.include("item type");
+    });
+
+    it("refuses a merge with only the master", async function () {
+      let error: any;
+      try {
+        await deletes.merge("ABCD1234", ["ABCD1234"]);
+      } catch (e) {
+        error = e;
+      }
+      expect(error?.code).to.equal("invalid_argument");
+    });
+  });
+
+  describe("attachments", function () {
+    beforeEach(function () {
+      gateway.addItem({
+        key: "EFGH5678",
+        itemType: "attachment",
+        attachmentContentType: "application/pdf",
+      });
+    });
+
+    it("renames a file with an undo label", async function () {
+      const result = await attachments.rename("EFGH5678", "better-name.pdf");
+      expect(result.to).to.equal("better-name.pdf");
+      expect(gateway.savedItems[0].saveOptions.undoAction).to.equal(
+        "zotmcp-undo-rename-attachment",
+      );
+    });
+
+    it("rejects a path where a bare filename is required", async function () {
+      // Zotero 10 throws if a stored-file path contains a slash.
+      for (const bad of ["dir/name.pdf", "dir\\name.pdf"]) {
+        let error: any;
+        try {
+          await attachments.rename("EFGH5678", bad);
+        } catch (e) {
+          error = e;
+        }
+        expect(error?.code, bad).to.equal("invalid_argument");
+        expect(error.message).to.include("bare filename");
+      }
+    });
+
+    it("relinks to a new path", async function () {
+      const result = await attachments.relink("EFGH5678", "/new/path.pdf");
+      expect(result.to).to.equal("/new/path.pdf");
+      expect(gateway.savedItems[0].saveOptions.undoAction).to.equal(
+        "zotmcp-undo-relink-attachment",
+      );
+    });
+
+    it("trashes an attachment", async function () {
+      const result = await attachments.remove("EFGH5678");
+      expect(result.key).to.equal("EFGH5678");
+      expect(gateway.trashedItems[0].saveOptions.undoAction).to.equal(
+        "zotmcp-undo-trash",
+      );
+    });
+
+    it("reports a missing file rather than a phantom path", async function () {
+      gateway.attachmentPath = null;
+      const attachment = await resolver.resolveAttachment("EFGH5678");
+
+      let error: any;
+      try {
+        await attachments.assertFilePresent(attachment);
+      } catch (e) {
+        error = e;
+      }
+      expect(error?.code).to.equal("file_missing");
+    });
+  });
+});

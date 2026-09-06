@@ -15,6 +15,13 @@ import {
   noteWrite,
   paperRead,
 } from "./readHandlers";
+import {
+  attachmentUpdate,
+  collectionUpdate,
+  libraryDelete,
+  libraryImport,
+  libraryUpdate,
+} from "./writeHandlers";
 import { ToolRegistry, type ToolSpec } from "./registry";
 
 /** Canonical surface. The drift test compares the registry against this. */
@@ -197,7 +204,7 @@ const specs: ToolSpec[] = [
       },
       ["kind"],
     ),
-    handler: pending("library_import", "Phase 7"),
+    handler: libraryImport,
   },
   {
     name: "library_update",
@@ -220,7 +227,7 @@ const specs: ToolSpec[] = [
         description: "Batch of operations, each shaped like a single call.",
       },
     }),
-    handler: pending("library_update", "Phase 7"),
+    handler: libraryUpdate,
   },
   {
     name: "collection_update",
@@ -253,7 +260,7 @@ const specs: ToolSpec[] = [
       },
       ["action"],
     ),
-    handler: pending("collection_update", "Phase 7"),
+    handler: collectionUpdate,
   },
   {
     name: "library_delete",
@@ -270,7 +277,7 @@ const specs: ToolSpec[] = [
       },
       ["mode"],
     ),
-    handler: pending("library_delete", "Phase 7"),
+    handler: libraryDelete,
   },
   {
     name: "attachment_update",
@@ -287,7 +294,7 @@ const specs: ToolSpec[] = [
       },
       ["action", "attachmentKey"],
     ),
-    handler: pending("attachment_update", "Phase 7"),
+    handler: attachmentUpdate,
   },
   {
     name: "note_write",

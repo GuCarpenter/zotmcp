@@ -62,6 +62,56 @@ export interface ZoteroGateway {
     saveOptions?: Record<string, unknown>,
   ): Promise<Zotero.Item>;
 
+  /** Resolves identifiers (DOI, ISBN, arXiv, PMID) into new items. */
+  importByIdentifier(
+    identifier: string,
+    collectionIDs: number[],
+  ): Promise<Zotero.Item[]>;
+
+  /** Attaches a local file to a parent item, imported or linked. */
+  importFile(input: {
+    path: string;
+    parentItemID: number;
+    linked: boolean;
+    title?: string;
+  }): Promise<Zotero.Item>;
+
+  /** Creates a regular item from validated fields and creators. */
+  createItem(input: {
+    itemType: string;
+    fields: Record<string, unknown>;
+    creators?: unknown[];
+    collectionIDs?: number[];
+  }): Promise<Zotero.Item>;
+
+  /** Valid field names for an item type, for validation and error messages. */
+  getFieldsForItemType(itemType: string): string[];
+  isValidItemType(itemType: string): boolean;
+
+  /** Library-wide tag operations. */
+  renameTag(libraryID: number, from: string, to: string): Promise<void>;
+  deleteTag(libraryID: number, tag: string): Promise<void>;
+  setTagColor(
+    libraryID: number,
+    tag: string,
+    color: string | false,
+  ): Promise<void>;
+
+  createCollection(input: {
+    name: string;
+    parentCollectionID?: number;
+  }): Promise<Zotero.Collection>;
+  saveCollection(
+    collection: Zotero.Collection,
+    saveOptions?: Record<string, unknown>,
+  ): Promise<void>;
+  eraseCollection(
+    collection: Zotero.Collection,
+    deleteItems: boolean,
+  ): Promise<void>;
+
+  mergeItems(master: Zotero.Item, others: Zotero.Item[]): Promise<void>;
+
   /** Creates a note item, attached to `parent` when given. */
   createNote(html: string, parent: Zotero.Item | null): Promise<Zotero.Item>;
 
@@ -303,6 +353,189 @@ export class RealZoteroGateway implements ZoteroGateway {
         };
       }
     ).Annotations.saveFromJSON(attachment, json, saveOptions);
+  }
+
+  public async importByIdentifier(
+    identifier: string,
+    collectionIDs: number[],
+  ): Promise<Zotero.Item[]> {
+    const zoteroAny = Zotero as unknown as {
+      Utilities: {
+        Internal: {
+          extractIdentifiers(text: string): Record<string, string>[];
+        };
+      };
+      Translate: { Search: new () => any };
+    };
+
+    const parsed = zoteroAny.Utilities.Internal.extractIdentifiers(identifier);
+    if (!parsed.length) {
+      throw new Error(
+        `"${identifier}" is not a recognizable DOI, ISBN, arXiv ID, PMID or URL.`,
+      );
+    }
+
+    const translate = new zoteroAny.Translate.Search();
+    translate.setIdentifier(parsed[0]);
+    const translators = await translate.getTranslators();
+    if (!translators?.length) {
+      throw new Error(`No translator could resolve "${identifier}".`);
+    }
+    translate.setTranslator(translators);
+
+    return (await translate.translate({
+      libraryID: this.userLibraryID,
+      collections: collectionIDs,
+    })) as Zotero.Item[];
+  }
+
+  public async importFile(input: {
+    path: string;
+    parentItemID: number;
+    linked: boolean;
+    title?: string;
+  }): Promise<Zotero.Item> {
+    const attachments = Zotero.Attachments as unknown as {
+      importFromFile(options: Record<string, unknown>): Promise<Zotero.Item>;
+      linkFromFile(options: Record<string, unknown>): Promise<Zotero.Item>;
+    };
+    const options = {
+      file: input.path,
+      parentItemID: input.parentItemID,
+      ...(input.title ? { title: input.title } : {}),
+    };
+    return input.linked
+      ? attachments.linkFromFile(options)
+      : attachments.importFromFile(options);
+  }
+
+  public async createItem(input: {
+    itemType: string;
+    fields: Record<string, unknown>;
+    creators?: unknown[];
+    collectionIDs?: number[];
+  }): Promise<Zotero.Item> {
+    const item = new Zotero.Item(input.itemType as never);
+    item.libraryID = this.userLibraryID;
+    for (const [field, value] of Object.entries(input.fields)) {
+      if (value === undefined || value === null || value === "") continue;
+      item.setField(field as never, String(value));
+    }
+    if (input.creators?.length) {
+      item.setCreators(input.creators as never);
+    }
+    if (input.collectionIDs?.length) {
+      item.setCollections(input.collectionIDs as never);
+    }
+    await item.saveTx();
+    return item;
+  }
+
+  public getFieldsForItemType(itemType: string): string[] {
+    const types = Zotero.ItemTypes as unknown as {
+      getID(name: string): number | false;
+    };
+    const fields = Zotero.ItemFields as unknown as {
+      getItemTypeFields(itemTypeID: number): number[];
+      getName(fieldID: number): string;
+    };
+    const typeID = types.getID(itemType);
+    if (typeID === false) return [];
+    return fields
+      .getItemTypeFields(typeID)
+      .map((fieldID) => fields.getName(fieldID));
+  }
+
+  public isValidItemType(itemType: string): boolean {
+    const types = Zotero.ItemTypes as unknown as {
+      getID(name: string): number | false;
+    };
+    return types.getID(itemType) !== false;
+  }
+
+  public async renameTag(
+    libraryID: number,
+    from: string,
+    to: string,
+  ): Promise<void> {
+    await (
+      Zotero.Tags as unknown as {
+        rename(libraryID: number, from: string, to: string): Promise<void>;
+      }
+    ).rename(libraryID, from, to);
+  }
+
+  public async deleteTag(libraryID: number, tag: string): Promise<void> {
+    const tags = Zotero.Tags as unknown as {
+      getID(tag: string): number | false;
+      removeFromLibrary(libraryID: number, tagIDs: number[]): Promise<void>;
+    };
+    const tagID = tags.getID(tag);
+    if (tagID === false) {
+      throw new Error(`No tag named "${tag}" exists in the library.`);
+    }
+    await tags.removeFromLibrary(libraryID, [tagID]);
+  }
+
+  public async setTagColor(
+    libraryID: number,
+    tag: string,
+    color: string | false,
+  ): Promise<void> {
+    await (
+      Zotero.Tags as unknown as {
+        setColor(
+          libraryID: number,
+          tag: string,
+          color: string | false,
+        ): Promise<void>;
+      }
+    ).setColor(libraryID, tag, color);
+  }
+
+  public async createCollection(input: {
+    name: string;
+    parentCollectionID?: number;
+  }): Promise<Zotero.Collection> {
+    const collection = new Zotero.Collection();
+    (collection as unknown as { libraryID: number }).libraryID =
+      this.userLibraryID;
+    collection.name = input.name;
+    if (input.parentCollectionID !== undefined) {
+      (collection as unknown as { parentID: number }).parentID =
+        input.parentCollectionID;
+    }
+    await collection.saveTx();
+    return collection;
+  }
+
+  public async saveCollection(
+    collection: Zotero.Collection,
+    saveOptions: Record<string, unknown> = {},
+  ): Promise<void> {
+    await collection.saveTx(saveOptions as never);
+  }
+
+  public async eraseCollection(
+    collection: Zotero.Collection,
+    deleteItems: boolean,
+  ): Promise<void> {
+    await (
+      collection as unknown as {
+        eraseTx(options: Record<string, unknown>): Promise<void>;
+      }
+    ).eraseTx({ deleteItems });
+  }
+
+  public async mergeItems(
+    master: Zotero.Item,
+    others: Zotero.Item[],
+  ): Promise<void> {
+    await (
+      Zotero.Items as unknown as {
+        merge(master: Zotero.Item, others: Zotero.Item[]): Promise<void>;
+      }
+    ).merge(master, others);
   }
 
   public async createNote(
