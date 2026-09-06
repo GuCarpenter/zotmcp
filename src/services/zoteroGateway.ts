@@ -6,6 +6,11 @@
  * against a fake. Nothing outside this file may reference `Zotero` directly.
  */
 
+import { config } from "../../package.json";
+
+/** Zotero's default connector-server port. */
+export const DEFAULT_HTTP_PORT = 23119;
+
 export interface ZoteroGateway {
   /** My Library's numeric ID. All operations are scoped to it (spec LB-1). */
   readonly userLibraryID: number;
@@ -30,11 +35,28 @@ export interface ZoteroGateway {
    */
   executeTransaction<T>(fn: () => Promise<T>): Promise<T>;
 
+  /** Reads a Zotero-scoped preference, e.g. `httpServer.port`. */
+  getZoteroPref(key: string): unknown;
+
+  /** Reads a plugin preference, without the `extensions.zotero.zotmcp.` prefix. */
   getPref(key: string): unknown;
   setPref(key: string, value: unknown): void;
 
+  /** True when Zotero's own HTTP server is running (spec S-3). */
+  isHttpServerEnabled(): boolean;
+  httpServerPort(): number;
+
+  hasEndpoint(path: string): boolean;
+  registerEndpoint(path: string, endpoint: EndpointConstructor): void;
+  unregisterEndpoint(path: string): void;
+
+  /** Best-effort user-visible message; never throws if no window exists. */
+  showPopup(title: string, body: string, isError: boolean): void;
+
   log(...args: unknown[]): void;
 }
+
+export type EndpointConstructor = new () => ZotmcpServer.Endpoint;
 
 export class RealZoteroGateway implements ZoteroGateway {
   public get userLibraryID(): number {
@@ -71,15 +93,61 @@ export class RealZoteroGateway implements ZoteroGateway {
     return Zotero.DB.executeTransaction(fn);
   }
 
+  public getZoteroPref(key: string): unknown {
+    return Zotero.Prefs.get(key);
+  }
+
   public getPref(key: string): unknown {
-    return Zotero.Prefs.get(key, true);
+    return Zotero.Prefs.get(`${config.prefsPrefix}.${key}`, true);
   }
 
   public setPref(key: string, value: unknown): void {
-    Zotero.Prefs.set(key, value as never, true);
+    Zotero.Prefs.set(`${config.prefsPrefix}.${key}`, value as never, true);
+  }
+
+  public isHttpServerEnabled(): boolean {
+    // Zotero.Server is absent entirely when the connector server is off, so the
+    // object check matters as much as the preference.
+    return Boolean(Zotero.Server?.Endpoints) && this.readServerPref();
+  }
+
+  public httpServerPort(): number {
+    const port = Number(Zotero.Prefs.get("httpServer.port"));
+    return Number.isFinite(port) && port > 0 ? port : DEFAULT_HTTP_PORT;
+  }
+
+  public hasEndpoint(path: string): boolean {
+    return Boolean(Zotero.Server?.Endpoints?.[path]);
+  }
+
+  public registerEndpoint(path: string, endpoint: EndpointConstructor): void {
+    Zotero.Server.Endpoints[path] = endpoint as never;
+  }
+
+  public unregisterEndpoint(path: string): void {
+    delete Zotero.Server?.Endpoints?.[path];
+  }
+
+  public showPopup(title: string, body: string, isError: boolean): void {
+    try {
+      const popup = new ztoolkit.ProgressWindow(title, {
+        closeOtherProgressWindows: false,
+      });
+      popup
+        .createLine({ text: body, type: isError ? "fail" : "default" })
+        .show(isError ? -1 : 5000);
+    } catch {
+      // No window yet (or headless test run). The log line below is the record.
+    }
   }
 
   public log(...args: unknown[]): void {
     ztoolkit.log(...args);
+  }
+
+  private readServerPref(): boolean {
+    const value = Zotero.Prefs.get("httpServer.enabled");
+    // Zotero ships the connector server enabled and the pref may be unset.
+    return value === undefined ? true : Boolean(value);
   }
 }

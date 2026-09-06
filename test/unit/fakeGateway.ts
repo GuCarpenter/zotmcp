@@ -3,7 +3,10 @@
  * plain Node with no Zotero process.
  */
 
-import type { ZoteroGateway } from "../../src/services/zoteroGateway";
+import type {
+  EndpointConstructor,
+  ZoteroGateway,
+} from "../../src/services/zoteroGateway";
 
 export const USER_LIBRARY_ID = 1;
 export const GROUP_LIBRARY_ID = 7;
@@ -31,8 +34,13 @@ export class FakeGateway implements ZoteroGateway {
   public items: FakeItem[] = [];
   public collections: FakeCollection[] = [];
   public prefs = new Map<string, unknown>();
+  public zoteroPrefs = new Map<string, unknown>();
+  public endpoints = new Map<string, EndpointConstructor>();
+  public popups: { title: string; body: string; isError: boolean }[] = [];
   public logs: unknown[][] = [];
   public transactionCount = 0;
+  public httpServerEnabled = true;
+  public port = 23119;
 
   /** Set to make the next `executeTransaction` body throw after it runs. */
   public failTransactionCommit = false;
@@ -102,6 +110,34 @@ export class FakeGateway implements ZoteroGateway {
 
   public setPref(key: string, value: unknown): void {
     this.prefs.set(key, value);
+  }
+
+  public getZoteroPref(key: string): unknown {
+    return this.zoteroPrefs.get(key);
+  }
+
+  public isHttpServerEnabled(): boolean {
+    return this.httpServerEnabled;
+  }
+
+  public httpServerPort(): number {
+    return this.port;
+  }
+
+  public hasEndpoint(path: string): boolean {
+    return this.endpoints.has(path);
+  }
+
+  public registerEndpoint(path: string, endpoint: EndpointConstructor): void {
+    this.endpoints.set(path, endpoint);
+  }
+
+  public unregisterEndpoint(path: string): void {
+    this.endpoints.delete(path);
+  }
+
+  public showPopup(title: string, body: string, isError: boolean): void {
+    this.popups.push({ title, body, isError });
   }
 
   public log(...args: unknown[]): void {

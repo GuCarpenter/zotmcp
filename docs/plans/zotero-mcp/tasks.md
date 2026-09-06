@@ -66,41 +66,43 @@ modules that make the spec's structural guarantees hold.
 
 ## Phase 3 — Transport, protocol, registry
 
-- [ ] 3.1 `src/protocol/jsonRpc.ts`: request parse, response/error builders,
+- [x] 3.1 `src/protocol/jsonRpc.ts`: request parse, response/error builders,
       standard codes; reject JSON-RPC batch arrays with `-32600`.
       Covers: S-7 (batch clause), E-4.
-- [ ] 3.2 `src/protocol/capabilities.ts`: protocol version negotiation capped at
+- [x] 3.2 `src/protocol/capabilities.ts`: protocol version negotiation capped at
       `2025-06-18`; advertise `tools` and `resources` only. Covers: S-4, S-5.
-- [ ] 3.3 `src/tools/registry.ts`: `ToolSpec` type (`name`, `description`,
+- [x] 3.3 `src/tools/registry.ts`: `ToolSpec` type (`name`, `description`,
       `inputSchema`, `mutability`, `handler`), `register()`, `list()`.
       `tools/list` output is generated, never hand-written. Covers: S-9.
-- [ ] 3.4 `src/protocol/dispatch.ts`: `initialize`, `notifications/*` (accepted,
+- [x] 3.4 `src/protocol/dispatch.ts`: `initialize`, `notifications/*` (accepted,
       no error), `ping`, `tools/list`, `tools/call`, `resources/list`,
       `resources/read`; unknown method → `-32601`. Pure function of
       `(method, params)` + injected services — no per-client state, so
       `tools/call` works without a prior `initialize`. Covers: S-6, S-8.
-- [ ] 3.5 `src/protocol/dispatch.ts`: map tool failures to a `tools/call` result
+- [x] 3.5 `src/protocol/dispatch.ts`: map tool failures to a `tools/call` result
       with `isError: true`, distinct from JSON-RPC protocol errors. Covers: E-4.
-- [ ] 3.6 `src/transport/endpoint.ts`: endpoint class with
+- [x] 3.6 `src/transport/endpoint.ts`: endpoint class with
       `supportedMethods = ["POST"]`, `supportedDataTypes = ["application/json"]`,
       `init(options) => [status, contentType, body]`; accept `options.data` as
       object or string. Covers: S-1, S-7 (method/content-type delegation).
-- [ ] 3.7 `src/transport/httpServerCheck.ts`: probe Zotero's HTTP server; on
+- [x] 3.7 `src/transport/httpServerCheck.ts`: probe Zotero's HTTP server; on
       disabled, emit a notification popup, an error log naming the preference, and
       set state for the prefs-pane banner. No fallback socket. Covers: S-3.
-- [ ] 3.8 `src/hooks.ts` + `src/index.ts`: register the endpoint after
+- [x] 3.8 `src/hooks.ts` + `src/index.ts`: register the endpoint after
       `Zotero.initializationPromise` and `uiReadyPromise`; warn if the path is
       already occupied; delete the endpoint key on shutdown; restart on
       `mcp.server.enabled` change. Covers: S-1, S-2.
-- [ ] 3.9 `src/tools/index.ts`: register `library_search` as a stub returning an
-      empty result, so the pipeline is callable end to end.
-- [ ] 3.10 `test/unit/protocol.test.ts`: batch rejection, unknown method,
+- [x] 3.9 `src/tools/index.ts`: register all eleven tools with real names,
+      descriptions and schemas; a handler that is not implemented yet throws an
+      error naming its phase. Registering the full surface immediately is what
+      lets task 3.11 lock it from the start.
+- [x] 3.10 `test/unit/protocol.test.ts`: batch rejection, unknown method,
       malformed JSON, `initialize` shape, `tools/call` with no prior
       `initialize`, two concurrent independent calls. Covers: S-4..S-8.
-- [ ] 3.11 `test/unit/toolSurface.test.ts`: registry names equal a frozen array of
+- [x] 3.11 `test/unit/toolSurface.test.ts`: registry names equal a frozen array of
       the eleven tool names — fails when a tool is added or renamed.
       Covers: S-9.
-- [ ] 3.12 `test/unit/toolVocabulary.test.ts`: no tool name, description, or
+- [x] 3.12 `test/unit/toolVocabulary.test.ts`: no tool name, description, or
       schema contains semantic / embedding / vector / undo / approval /
       confirmation / group library / OpenAlex. Covers: S-12.
 - [ ] 3.13 Manual checkpoint: connect a real MCP client to

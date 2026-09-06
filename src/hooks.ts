@@ -1,10 +1,25 @@
 /**
- * Plugin lifecycle. The MCP endpoint is registered here once Zotero is fully
- * initialized, and removed on shutdown so no stale endpoint survives an
- * upgrade or disable.
+ * Plugin lifecycle. The MCP endpoint is registered once Zotero is fully
+ * initialized and removed on shutdown, so no stale endpoint survives a disable
+ * or upgrade.
  */
 
 import { config } from "../package.json";
+import type { DispatchDeps } from "./protocol/dispatch";
+import { createResourceProvider } from "./resources";
+import { ItemResolver } from "./services/itemResolver";
+import { MutationService } from "./services/mutationService";
+import { RealZoteroGateway } from "./services/zoteroGateway";
+import { createToolRegistry } from "./tools";
+import {
+  MCP_ENDPOINT_PATH,
+  registerEndpoint,
+  unregisterEndpoint,
+} from "./transport/endpoint";
+
+const SERVER_ENABLED_PREF = "mcp.server.enabled";
+
+let prefObserverId: symbol | string | undefined;
 
 export async function onStartup(): Promise<void> {
   await Promise.all([
@@ -13,13 +28,34 @@ export async function onStartup(): Promise<void> {
     Zotero.uiReadyPromise,
   ]);
 
-  ztoolkit.log("startup");
+  const gateway = new RealZoteroGateway();
+  const deps: DispatchDeps = {
+    registry: createToolRegistry(),
+    toolContext: {
+      gateway,
+      resolver: new ItemResolver(gateway),
+      mutations: new MutationService(gateway),
+    },
+    resources: createResourceProvider(),
+    log: (...args) => gateway.log(...args),
+  };
+
+  addon.data.gateway = gateway;
+  addon.data.dispatchDeps = deps;
+
+  startOrStopServer();
+  watchServerPref();
 }
 
 export async function onShutdown(): Promise<void> {
-  ztoolkit.log("shutdown");
+  unwatchServerPref();
 
+  if (addon.data.gateway) {
+    unregisterEndpoint(addon.data.gateway);
+  }
+  addon.data.endpointRegistered = false;
   addon.data.alive = false;
+
   // @ts-expect-error - plugin instance is not typed
   delete Zotero[config.addonInstance];
 }
@@ -27,3 +63,52 @@ export async function onShutdown(): Promise<void> {
 export async function onMainWindowLoad(_win: Window): Promise<void> {}
 
 export async function onMainWindowUnload(_win: Window): Promise<void> {}
+
+/** Applies the current `mcp.server.enabled` preference. */
+export function startOrStopServer(): void {
+  const gateway = addon.data.gateway;
+  const deps = addon.data.dispatchDeps;
+  if (!gateway || !deps) return;
+
+  const enabled = gateway.getPref(SERVER_ENABLED_PREF) !== false;
+
+  if (!enabled) {
+    unregisterEndpoint(gateway);
+    addon.data.endpointRegistered = false;
+    addon.data.endpointUrl = null;
+    gateway.log(`MCP endpoint disabled by ${SERVER_ENABLED_PREF}`);
+    return;
+  }
+
+  const registration = registerEndpoint(gateway, deps);
+  addon.data.endpointRegistered = registration.registered;
+  addon.data.endpointUrl = registration.url;
+  addon.data.httpServerUnavailableReason = registration.reason;
+}
+
+function watchServerPref(): void {
+  const gateway = addon.data.gateway;
+  if (!gateway) return;
+
+  try {
+    prefObserverId = Zotero.Prefs.registerObserver(
+      `${config.prefsPrefix}.${SERVER_ENABLED_PREF}`,
+      () => startOrStopServer(),
+      true,
+    );
+  } catch (e) {
+    gateway.log("WARN could not observe the server preference", e);
+  }
+}
+
+function unwatchServerPref(): void {
+  if (prefObserverId === undefined) return;
+  try {
+    Zotero.Prefs.unregisterObserver(prefObserverId as never);
+  } catch {
+    // Nothing actionable: shutdown is already in progress.
+  }
+  prefObserverId = undefined;
+}
+
+export { MCP_ENDPOINT_PATH };
