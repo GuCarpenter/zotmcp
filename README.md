@@ -102,6 +102,18 @@ done
 their reasons, the Zotero 10 platform behaviour the implementation depends on,
 and the known limitations.
 
+## Releasing
+
+`npm run release` behaves differently by environment. Run locally it bumps the
+version, commits, tags and pushes; the tag then triggers the release workflow,
+which runs the same command in CI where it instead publishes a release tagged
+`v<version>` with the XPI, plus a release tagged `release` carrying
+`update.json` — the URL the plugin's auto-update checks.
+
+```sh
+npm run release patch    # or minor, major, or an explicit version
+```
+
 ## Development
 
 ```sh

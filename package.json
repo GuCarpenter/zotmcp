@@ -5,12 +5,12 @@
   "description": "MCP server embedded in Zotero: search, read, annotate and manage My Library from any MCP client",
   "config": {
     "addonName": "Zotmcp",
-    "addonID": "zotmcp@anyinlover.github.io",
+    "addonID": "zotmcp@gucarpenter.github.io",
     "addonRef": "zotmcp",
     "addonInstance": "Zotmcp",
     "prefsPrefix": "extensions.zotero.zotmcp"
   },
-  "author": "guhangsong",
+  "author": "GuCarpenter",
   "license": "AGPL-3.0-or-later",
   "repository": {
     "type": "git",

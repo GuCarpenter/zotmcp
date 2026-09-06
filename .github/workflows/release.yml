@@ -1,0 +1,44 @@
+name: Release
+
+# Triggered by the tag that `npm run release` pushes. That command behaves
+# differently by environment: run locally it bumps the version, commits, tags and
+# pushes; run in CI it skips all of that and instead publishes the built assets —
+# a release tagged `v<version>` carrying the XPI, plus a release tagged `release`
+# carrying `update.json`, which is the URL the plugin's auto-update points at.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Publish the XPI and update manifest
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The changelog is generated from commit history, which a shallow
+          # checkout does not have.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build the XPI
+        run: npm run build
+
+      # No test gate here on purpose: CI already runs the suite on every push to
+      # main, which is where a failure should be caught. A tag that has been cut
+      # should be publishable without a second opinion.
+      - name: Publish release assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run release -- --yes
