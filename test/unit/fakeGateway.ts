@@ -55,6 +55,7 @@ export class FakeGateway implements ZoteroGateway {
   public popups: { title: string; body: string; isError: boolean }[] = [];
   public logs: unknown[][] = [];
   public transactionCount = 0;
+  public transactionDepth = 0;
   public stagedUndoActions: {
     action: string;
     args?: Record<string, unknown>;
@@ -77,8 +78,11 @@ export class FakeGateway implements ZoteroGateway {
     json: Record<string, unknown>;
     saveOptions: Record<string, unknown>;
   }[] = [];
-  public savedItems: { key: string; saveOptions: Record<string, unknown> }[] =
-    [];
+  public savedItems: {
+    key: string;
+    saveOptions: Record<string, unknown>;
+    inTransaction?: boolean;
+  }[] = [];
   public trashedItems: { key: string; saveOptions: Record<string, unknown> }[] =
     [];
   public createdNotes: {
@@ -387,7 +391,13 @@ export class FakeGateway implements ZoteroGateway {
     item: Zotero.Item,
     saveOptions: Record<string, unknown> = {},
   ): Promise<void> {
-    this.savedItems.push({ key: item.key, saveOptions });
+    // Mirrors the real gateway: inside a transaction the save carries no undo
+    // option, because the transaction's staged action supplies the label.
+    this.savedItems.push({
+      key: item.key,
+      saveOptions: this.inTransaction() ? {} : saveOptions,
+      inTransaction: this.inTransaction(),
+    });
   }
 
   public async trashItem(
@@ -419,9 +429,19 @@ export class FakeGateway implements ZoteroGateway {
     return found ? (found as unknown as Zotero.Collection) : false;
   }
 
+  public inTransaction(): boolean {
+    return this.transactionDepth > 0;
+  }
+
   public async executeTransaction<T>(fn: () => Promise<T>): Promise<T> {
     this.transactionCount += 1;
-    const result = await fn();
+    this.transactionDepth += 1;
+    let result: T;
+    try {
+      result = await fn();
+    } finally {
+      this.transactionDepth -= 1;
+    }
     if (this.failTransactionCommit) {
       this.failTransactionCommit = false;
       throw new Error("simulated commit failure");

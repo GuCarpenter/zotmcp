@@ -13,7 +13,7 @@
  * a coarse one, and a coarse one that says so is honest.
  */
 
-import { InvalidArgumentError, NotFoundError } from "../errors";
+import { InvalidArgumentError, TextNotFoundError } from "../errors";
 import {
   blockText,
   EPUB_CONTENT_TYPE,
@@ -99,10 +99,7 @@ export class AnnotationService {
     }
 
     if (!matches.length) {
-      throw new NotFoundError(
-        `block containing the requested text in attachment "${attachment.key}"`,
-        needle.slice(0, 40),
-      );
+      throw new TextNotFoundError(attachment.key, needle);
     }
     if (matches.length > 1) {
       throw new InvalidArgumentError(

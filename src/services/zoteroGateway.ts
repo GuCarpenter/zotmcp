@@ -127,11 +127,19 @@ export interface ZoteroGateway {
   /** Creates a note item, attached to `parent` when given. */
   createNote(html: string, parent: Zotero.Item | null): Promise<Zotero.Item>;
 
-  /** Saves an already-modified item. */
+  /**
+   * Saves an already-modified item, choosing `save()` inside an open transaction
+   * and `saveTx()` outside one. Calling `saveTx()` within a transaction waits on
+   * a transaction that cannot commit until the caller returns, so the write
+   * deadlocks until the queue deadline fires.
+   */
   saveItem(
     item: Zotero.Item,
     saveOptions?: Record<string, unknown>,
   ): Promise<void>;
+
+  /** True while a Zotero DB transaction is open on this thread. */
+  inTransaction(): boolean;
 
   /** Moves an item to the trash, which Zotero can undo. */
   trashItem(
@@ -539,6 +547,10 @@ export class RealZoteroGateway implements ZoteroGateway {
     collection: Zotero.Collection,
     saveOptions: Record<string, unknown> = {},
   ): Promise<void> {
+    if (this.inTransaction()) {
+      await (collection as unknown as { save(): Promise<unknown> }).save();
+      return;
+    }
     await collection.saveTx(saveOptions as never);
   }
 
@@ -594,10 +606,22 @@ export class RealZoteroGateway implements ZoteroGateway {
     return note;
   }
 
+  public inTransaction(): boolean {
+    return Boolean(
+      (Zotero.DB as unknown as { inTransaction(): boolean }).inTransaction(),
+    );
+  }
+
   public async saveItem(
     item: Zotero.Item,
     saveOptions: Record<string, unknown> = {},
   ): Promise<void> {
+    if (this.inTransaction()) {
+      // The enclosing transaction's staged undo action carries the label, so no
+      // per-save undo option is needed — and `saveTx` here would deadlock.
+      await (item as unknown as { save(): Promise<unknown> }).save();
+      return;
+    }
     await item.saveTx(saveOptions as never);
   }
 
@@ -607,7 +631,7 @@ export class RealZoteroGateway implements ZoteroGateway {
   ): Promise<void> {
     // Trashing only flips the deleted flag, which is why Zotero can undo it.
     (item as unknown as { deleted: boolean }).deleted = true;
-    await item.saveTx(saveOptions as never);
+    await this.saveItem(item, saveOptions);
   }
 
   public async readTextFile(path: string, maxLength?: number): Promise<string> {

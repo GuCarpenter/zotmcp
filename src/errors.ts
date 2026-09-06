@@ -46,6 +46,24 @@ export class GroupLibraryUnsupportedError extends ZotmcpError {
   }
 }
 
+/**
+ * Text that could not be located in a document. Distinct from `NotFoundError`,
+ * whose message is phrased for a key lookup and reads as nonsense when the thing
+ * being looked up is a quoted passage.
+ */
+export class TextNotFoundError extends ZotmcpError {
+  constructor(attachmentKey: string, text: string) {
+    const quoted = text.length > 60 ? `${text.slice(0, 60)}…` : text;
+    super(
+      "not_found",
+      `No text matching "${quoted}" was found in attachment ` +
+        `"${attachmentKey}". Quote a passage that appears in the document, or ` +
+        `pass a page and rects.`,
+    );
+    this.name = "TextNotFoundError";
+  }
+}
+
 export class NoTextLayerError extends ZotmcpError {
   constructor(key: string) {
     super(
@@ -102,6 +120,22 @@ export function isZotmcpError(value: unknown): value is ZotmcpError {
 export function describeError(value: unknown): string {
   if (isZotmcpError(value) || value instanceof Error) return value.message;
   if (typeof value === "string") return value;
+
+  // Zotero throws plain objects in places, and an error that crossed a sandbox
+  // boundary can lose its prototype. Either way a bare `{"name":"..."}` tells a
+  // caller nothing, so read the usual fields before falling back to JSON.
+  if (value && typeof value === "object") {
+    const candidate = value as { message?: unknown; name?: unknown };
+    if (typeof candidate.message === "string" && candidate.message) {
+      return typeof candidate.name === "string" && candidate.name
+        ? `${candidate.name}: ${candidate.message}`
+        : candidate.message;
+    }
+    if (typeof candidate.name === "string" && candidate.name) {
+      return candidate.name;
+    }
+  }
+
   try {
     return JSON.stringify(value);
   } catch {

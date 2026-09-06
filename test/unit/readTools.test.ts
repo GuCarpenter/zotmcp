@@ -81,6 +81,23 @@ describe("read tools", function () {
       expect(payload.items[0].snippetFrom).to.equal("EFGH5678");
     });
 
+    it("omits the item title for an annotation hit, whose text is the label", async function () {
+      const annotation = gateway.addItem({
+        key: "ANNO0001",
+        id: 3,
+        itemType: "annotation",
+      });
+      Object.assign(annotation, { annotationType: "highlight" });
+      gateway.searchResults = [3];
+
+      const payload = parse(
+        await call("library_search", { mode: "annotation", query: "x" }),
+      );
+
+      expect(payload.items[0].key).to.equal("ANNO0001");
+      expect(payload.items[0].title).to.equal(undefined);
+    });
+
     it("lists collections with select URIs", async function () {
       gateway.addCollection({ key: "MT53KB66", name: "Transformers" });
 

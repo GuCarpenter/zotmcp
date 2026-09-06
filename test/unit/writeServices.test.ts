@@ -114,6 +114,15 @@ describe("write services", function () {
       expect(item.getTags()).to.deep.equal([]);
     });
 
+    it("uses save() rather than saveTx() inside the transaction", async function () {
+      // saveTx() inside an open transaction waits for a transaction that cannot
+      // commit until this call returns, so the write deadlocks until the queue
+      // deadline fires. This is what that regression looks like.
+      await writes.updateTags(["ABCD1234"], "add", ["new"]);
+      expect(gateway.savedItems[0].inTransaction).to.equal(true);
+      expect(gateway.savedItems[0].saveOptions).to.deep.equal({});
+    });
+
     it("stages one undo step for a multi-item change", async function () {
       await writes.updateTags(["ABCD1234", "BCDE2345"], "add", ["batch"]);
       expect(gateway.stagedUndoActions).to.deep.equal([

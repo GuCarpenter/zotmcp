@@ -112,15 +112,34 @@ describe("annotationService", function () {
       expect(gateway.savedAnnotations).to.have.length(0);
     });
 
-    it("refuses text it cannot find", async function () {
+    it("refuses text it cannot find, phrased for a passage rather than a key", async function () {
       let error: any;
       try {
         await service.highlightText(pdf, { text: "not in the document" });
       } catch (e) {
         error = e;
       }
+
       expect(error?.code).to.equal("not_found");
+      expect(error.message).to.include(
+        'No text matching "not in the document"',
+      );
+      expect(error.message).to.include("EFGH5678");
+      // The generic not-found template talks about keys, which reads as nonsense
+      // when the thing being looked for is a quoted passage.
+      expect(error.message).to.not.include("found for key");
       expect(gateway.savedAnnotations).to.have.length(0);
+    });
+
+    it("truncates a long quote in the error", async function () {
+      let error: any;
+      try {
+        await service.highlightText(pdf, { text: "z".repeat(200) });
+      } catch (e) {
+        error = e;
+      }
+      expect(error.message).to.include("…");
+      expect(error.message.length).to.be.lessThan(240);
     });
 
     it("refuses a quote too short to place", async function () {

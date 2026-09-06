@@ -93,9 +93,12 @@ export async function librarySearch(
 
   const records = [];
   for (const item of items) {
-    const record: Record<string, unknown> = {
-      ...ctx.read.summarize(item),
-    };
+    // An annotation has no title, creators or year, so the item summary would
+    // only add "(untitled)" noise; its own text is the meaningful label.
+    const isAnnotation = Boolean(item.isAnnotation?.());
+    const record: Record<string, unknown> = isAnnotation
+      ? { key: item.key, itemType: item.itemType }
+      : { ...ctx.read.summarize(item) };
 
     // A full-text hit is useless without the matching text, and the annotation
     // mode returns annotations, whose own text is the point.
@@ -109,7 +112,7 @@ export async function librarySearch(
           break;
         }
       }
-    } else if (mode === "annotation" && item.isAnnotation?.()) {
+    } else if (isAnnotation) {
       const parent = item.parentItem;
       if (parent) {
         Object.assign(record, ctx.read.annotationRecord(item, parent));
