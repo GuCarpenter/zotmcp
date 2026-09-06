@@ -14,7 +14,7 @@
   "license": "AGPL-3.0-or-later",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/anyinlover/zotmcp.git"
+    "url": "git+https://github.com/GuCarpenter/zotmcp.git"
   },
   "scripts": {
     "start": "zotero-plugin serve",
