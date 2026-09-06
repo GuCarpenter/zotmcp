@@ -23,10 +23,29 @@ export interface ZoteroGateway {
 
   getItemByKey(libraryID: number, key: string): Promise<Zotero.Item | false>;
   getItemByID(itemID: number): Zotero.Item | false;
+  getItemsByID(itemIDs: number[]): Promise<Zotero.Item[]>;
   getCollectionByKey(
     libraryID: number,
     key: string,
   ): Promise<Zotero.Collection | false>;
+  getCollectionsByLibrary(
+    libraryID: number,
+    recursive: boolean,
+  ): Zotero.Collection[];
+  getAllTags(libraryID: number): Promise<{ tag: string; type: number }[]>;
+
+  /** A fresh `Zotero.Search` already scoped to the given library. */
+  createSearch(libraryID: number): SearchHandle;
+
+  /** True when a term can be answered by Zotero's full-text index. */
+  canSearchFullText(text: string): boolean;
+
+  /**
+   * Path of an attachment's cached extracted text, used to cut a snippet around
+   * a full-text hit. Null when nothing is cached.
+   */
+  fulltextCachePath(item: Zotero.Item): string | null;
+  readTextFile(path: string, maxLength?: number): Promise<string>;
 
   /**
    * Runs `fn` inside a Zotero DB transaction. Multi-save operations rely on this
@@ -68,6 +87,18 @@ export interface ZoteroGateway {
 
 export type EndpointConstructor = new () => ZotmcpServer.Endpoint;
 
+/**
+ * Minimal view of `Zotero.Search`. Conditions are added one at a time, and the
+ * search runs to item IDs.
+ *
+ * `addCondition` mirrors Zotero's own signature, minus the legacy `required`
+ * argument, which Zotero 10 throws on.
+ */
+export interface SearchHandle {
+  addCondition(condition: string, operator: string, value?: string): void;
+  search(): Promise<number[]>;
+}
+
 export class RealZoteroGateway implements ZoteroGateway {
   public get userLibraryID(): number {
     return Zotero.Libraries.userLibraryID;
@@ -90,6 +121,76 @@ export class RealZoteroGateway implements ZoteroGateway {
 
   public getItemByID(itemID: number): Zotero.Item | false {
     return Zotero.Items.get(itemID);
+  }
+
+  public async getItemsByID(itemIDs: number[]): Promise<Zotero.Item[]> {
+    if (!itemIDs.length) return [];
+    return Zotero.Items.getAsync(itemIDs);
+  }
+
+  public getCollectionsByLibrary(
+    libraryID: number,
+    recursive: boolean,
+  ): Zotero.Collection[] {
+    return Zotero.Collections.getByLibrary(libraryID, recursive);
+  }
+
+  public async getAllTags(
+    libraryID: number,
+  ): Promise<{ tag: string; type: number }[]> {
+    return Zotero.Tags.getAll(libraryID) as Promise<
+      { tag: string; type: number }[]
+    >;
+  }
+
+  public createSearch(libraryID: number): SearchHandle {
+    const search = new Zotero.Search();
+    // zotero-types marks libraryID readonly, but Zotero.Search defines a setter
+    // (search.js: defineProperty with get/set) and scoping a search is the
+    // documented way to bound it to a library.
+    (search as unknown as { libraryID: number }).libraryID = libraryID;
+    return {
+      addCondition: (condition, operator, value) =>
+        search.addCondition(condition as never, operator as never, value),
+      search: () => search.search() as unknown as Promise<number[]>,
+    };
+  }
+
+  public canSearchFullText(text: string): boolean {
+    try {
+      return Boolean(
+        (
+          Zotero as unknown as {
+            FullText?: { canSearchContent(text: string): boolean };
+          }
+        ).FullText?.canSearchContent(text),
+      );
+    } catch {
+      // An unavailable index is not a failure: the caller falls back to
+      // reporting no snippet rather than no result.
+      return false;
+    }
+  }
+
+  public fulltextCachePath(item: Zotero.Item): string | null {
+    try {
+      const file = (
+        Zotero as unknown as {
+          FullText?: { getItemCacheFile(item: Zotero.Item): { path: string } };
+        }
+      ).FullText?.getItemCacheFile(item);
+      return file?.path ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  public async readTextFile(path: string, maxLength?: number): Promise<string> {
+    return Zotero.File.getContentsAsync(
+      path,
+      "utf-8",
+      maxLength,
+    ) as Promise<string>;
   }
 
   public async getCollectionByKey(

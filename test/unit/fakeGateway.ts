@@ -5,11 +5,18 @@
 
 import type {
   EndpointConstructor,
+  SearchHandle,
   ZoteroGateway,
 } from "../../src/services/zoteroGateway";
 
 export const USER_LIBRARY_ID = 1;
 export const GROUP_LIBRARY_ID = 7;
+
+export interface RecordedCondition {
+  condition: string;
+  operator: string;
+  value?: string;
+}
 
 export interface FakeItem {
   key: string;
@@ -46,6 +53,20 @@ export class FakeGateway implements ZoteroGateway {
   public registeredLocalizations: string[] = [];
   public httpServerEnabled = true;
   public port = 23119;
+  public tags: { tag: string; type: number }[] = [];
+  /** One entry per createSearch() call, holding the conditions it received. */
+  public searches: RecordedCondition[][] = [];
+  public searchResults: number[] = [];
+  /** Condition names createSearch() should reject, mimicking Zotero. */
+  public rejectConditions = new Set<string>();
+  public fullTextSearchable = true;
+  public cachePath: string | null = "/tmp/zotero-ft-cache";
+  public cacheText = "";
+
+  /** Conditions from the most recent search. */
+  public get lastSearch(): RecordedCondition[] {
+    return this.searches[this.searches.length - 1] ?? [];
+  }
 
   /** Set to make the next `executeTransaction` body throw after it runs. */
   public failTransactionCommit = false;
@@ -89,6 +110,54 @@ export class FakeGateway implements ZoteroGateway {
   public getItemByID(itemID: number): Zotero.Item | false {
     const found = this.items.find((item) => item.id === itemID);
     return found ? (toZoteroItem(found) as unknown as Zotero.Item) : false;
+  }
+
+  public async getItemsByID(itemIDs: number[]): Promise<Zotero.Item[]> {
+    return itemIDs
+      .map((id) => this.items.find((item) => item.id === id))
+      .filter((item): item is FakeItem => Boolean(item))
+      .map((item) => toZoteroItem(item) as unknown as Zotero.Item);
+  }
+
+  public getCollectionsByLibrary(
+    _libraryID: number,
+    _recursive: boolean,
+  ): Zotero.Collection[] {
+    return this.collections as unknown as Zotero.Collection[];
+  }
+
+  public async getAllTags(
+    _libraryID: number,
+  ): Promise<{ tag: string; type: number }[]> {
+    return this.tags;
+  }
+
+  /** Records every condition added, which is what the search tests assert on. */
+  public createSearch(_libraryID: number): SearchHandle {
+    const conditions: RecordedCondition[] = [];
+    this.searches.push(conditions);
+    const results = this.searchResults;
+    return {
+      addCondition: (condition, operator, value) => {
+        if (this.rejectConditions.has(condition)) {
+          throw new Error(`Invalid condition ${condition}`);
+        }
+        conditions.push({ condition, operator, value });
+      },
+      search: async () => results,
+    };
+  }
+
+  public canSearchFullText(_text: string): boolean {
+    return this.fullTextSearchable;
+  }
+
+  public fulltextCachePath(_item: Zotero.Item): string | null {
+    return this.cachePath;
+  }
+
+  public async readTextFile(_path: string): Promise<string> {
+    return this.cacheText;
   }
 
   public async getCollectionByKey(
