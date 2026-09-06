@@ -96,6 +96,12 @@ for s in 32 48 96; do
 done
 ```
 
+## Design
+
+[`docs/design.md`](docs/design.md) covers the architecture, the decisions and
+their reasons, the Zotero 10 platform behaviour the implementation depends on,
+and the known limitations.
+
 ## Development
 
 ```sh
