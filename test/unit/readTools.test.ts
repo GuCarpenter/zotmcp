@@ -27,7 +27,7 @@ function reader(
       return blocks.slice(start, end + 1);
     },
     async getPageBlocks(pageIndex) {
-      return blocks.filter((b) => b.anchor?.pageIndex === pageIndex);
+      return blocks.filter((b) => b.anchor?.pageRects?.[0]?.[0] === pageIndex);
     },
   };
 }
@@ -118,6 +118,19 @@ describe("read tools", function () {
       expect(payload.tags).to.deep.equal(["attention", "nlp"]);
     });
 
+    it("deduplicates a tag stored under both manual and automatic types", async function () {
+      // Zotero keeps one row per tag type, so the same name comes back twice.
+      gateway.tags = [
+        { tag: "No DOI found", type: 0 },
+        { tag: "No DOI found", type: 1 },
+      ];
+
+      const payload = parse(await call("library_search", { entity: "tags" }));
+
+      expect(payload.tags).to.deep.equal(["No DOI found"]);
+      expect(payload.total).to.equal(1);
+    });
+
     it("rejects an unknown entity naming the value", async function () {
       let error: any;
       try {
@@ -199,12 +212,12 @@ describe("read tools", function () {
         [
           {
             type: "paragraph",
-            anchor: { pageIndex: 0 },
+            anchor: { pageRects: [[0, 0, 0, 100, 10]] },
             content: [{ text: "one" }],
           },
           {
             type: "paragraph",
-            anchor: { pageIndex: 1 },
+            anchor: { pageRects: [[1, 0, 0, 100, 10]] },
             content: [{ text: "two" }],
           },
         ],

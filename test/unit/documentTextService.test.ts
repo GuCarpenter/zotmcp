@@ -3,6 +3,7 @@ import {
   blocksToText,
   blockText,
   DocumentTextService,
+  firstPageIndex,
   flattenOutline,
   parsePageRange,
 } from "../../src/services/documentTextService";
@@ -10,11 +11,19 @@ import type { SdtNode, SdtReader } from "../../src/services/zoteroGateway";
 import { FakeGateway } from "./fakeGateway";
 
 function heading(text: string, pageIndex = 0): SdtNode {
-  return { type: "heading", anchor: { pageIndex }, content: [{ text }] };
+  return {
+    type: "heading",
+    anchor: { pageRects: [[pageIndex, 0, 0, 100, 10]] },
+    content: [{ text }],
+  };
 }
 
 function paragraph(text: string, pageIndex = 0): SdtNode {
-  return { type: "paragraph", anchor: { pageIndex }, content: [{ text }] };
+  return {
+    type: "paragraph",
+    anchor: { pageRects: [[pageIndex, 0, 0, 100, 10]] },
+    content: [{ text }],
+  };
 }
 
 /** Minimal stand-in for Zotero's SDT pack reader. */
@@ -36,7 +45,7 @@ function fakeReader(
       return blocks.slice(start, end + 1);
     },
     async getPageBlocks(pageIndex) {
-      return blocks.filter((b) => b.anchor?.pageIndex === pageIndex);
+      return blocks.filter((b) => b.anchor?.pageRects?.[0]?.[0] === pageIndex);
     },
   };
 }
@@ -81,6 +90,30 @@ describe("documentTextService", function () {
 
     it("separates top-level blocks with a blank line", function () {
       expect(blocksToText([paragraph("a"), paragraph("b")])).to.equal("a\n\nb");
+    });
+  });
+
+  describe("page anchors", function () {
+    it("reads the page index from the first page rect, Zotero's real shape", function () {
+      expect(
+        firstPageIndex({ anchor: { pageRects: [[4, 10, 20, 30, 40]] } }),
+      ).to.equal(4);
+    });
+
+    it("inherits a page from a child block when the parent has no anchor", function () {
+      expect(
+        firstPageIndex({
+          content: [{ anchor: { pageRects: [[2, 0, 0, 1, 1]] }, content: [] }],
+        }),
+      ).to.equal(2);
+    });
+
+    it("tolerates a bare pageIndex, should a producer emit one", function () {
+      expect(firstPageIndex({ anchor: { pageIndex: 7 } })).to.equal(7);
+    });
+
+    it("returns undefined when nothing is anchored", function () {
+      expect(firstPageIndex({ content: [{ text: "x" }] })).to.equal(undefined);
     });
   });
 
@@ -356,6 +389,31 @@ describe("documentTextService", function () {
 
       expect(result.sections).to.have.length(1);
       expect(result.sections[0].text).to.equal("once upon a time");
+    });
+
+    it("derives a start page from the section's first block when the outline omits it", async function () {
+      gateway.sdtReader = fakeReader(blocks, {
+        pages: [{}, {}],
+        // A PDF outline entry often carries no target position.
+        outline: [{ title: "Method", ref: [2] }],
+      });
+
+      const result = await service.sections(attachment(gateway));
+
+      expect(result.sections[0].startPage).to.equal(2);
+    });
+
+    it("still reports a start page when text is not requested", async function () {
+      gateway.sdtReader = fakeReader(blocks, {
+        pages: [{}, {}],
+        outline: [{ title: "Method", ref: [2] }],
+      });
+
+      const result = await service.sections(attachment(gateway), {
+        includeText: false,
+      });
+
+      expect(result.sections[0].startPage).to.equal(2);
     });
 
     it("acts as a table of contents when text is not requested", async function () {

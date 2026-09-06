@@ -61,8 +61,9 @@ export async function librarySearch(
   if (entity === "tags") {
     const tags = await ctx.gateway.getAllTags(ctx.gateway.userLibraryID);
     const query = (str(args, "query") ?? "").toLowerCase();
-    const matched = tags
-      .map((tag) => tag.tag)
+    // Zotero stores a tag per type (manual and automatic), so the same name can
+    // appear twice; a caller wants the vocabulary, not the storage rows.
+    const matched = [...new Set(tags.map((tag) => tag.tag))]
       .filter((tag) => (query ? tag.toLowerCase().includes(query) : true))
       .sort((a, b) => a.localeCompare(b));
     return jsonResult({ entity, total: matched.length, tags: matched });

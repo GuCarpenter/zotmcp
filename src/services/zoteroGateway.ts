@@ -120,7 +120,15 @@ export interface SdtNode {
   type?: string;
   text?: string;
   content?: SdtNode[];
-  anchor?: { pageIndex?: number };
+  /**
+   * Zotero anchors a block with `pageRects`, each entry being
+   * `[pageIndex, x1, y1, x2, y2]` — there is no bare `pageIndex` field, though
+   * one is tolerated in case a future producer emits it.
+   */
+  anchor?: {
+    pageRects?: number[][];
+    pageIndex?: number;
+  };
 }
 
 export interface SdtOutlineItem {

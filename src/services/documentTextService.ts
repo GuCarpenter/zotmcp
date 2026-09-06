@@ -99,8 +99,16 @@ export function blocksToText(blocks: SdtNode[]): string {
     .join("\n\n");
 }
 
-function firstPageIndex(node: SdtNode): number | undefined {
+/**
+ * A block's page comes from its anchor's first page rect, whose leading element
+ * is the 0-based page index (`[pageIndex, x1, y1, x2, y2]`). Blocks without an
+ * anchor of their own inherit one from their children.
+ */
+export function firstPageIndex(node: SdtNode): number | undefined {
+  const rect = node.anchor?.pageRects?.[0];
+  if (Array.isArray(rect) && typeof rect[0] === "number") return rect[0];
   if (typeof node.anchor?.pageIndex === "number") return node.anchor.pageIndex;
+
   for (const child of node.content ?? []) {
     const found = firstPageIndex(child);
     if (found !== undefined) return found;
@@ -391,9 +399,13 @@ export class DocumentTextService {
 
       let text: string | undefined;
       let charCount = 0;
+      let pageIndex = entry.pageIndex;
 
       if (includeText && start <= end && used < maxChars) {
         const blocks = await reader.getBlocks(start, end);
+        if (pageIndex === undefined && blocks.length) {
+          pageIndex = firstPageIndex(blocks[0]);
+        }
         // The heading itself opens the section, so its text is not repeated.
         const body = blocksToText(blocks.slice(1));
         charCount = body.length;
@@ -404,16 +416,20 @@ export class DocumentTextService {
           text = body;
         }
         used += text.length;
-      } else if (includeText) {
-        truncated = truncated || start <= end;
+      } else {
+        if (includeText) truncated = truncated || start <= end;
+        // Outline entries do not always carry a page, but the block they point
+        // at does, and a section without a page number is far less useful.
+        if (pageIndex === undefined && start <= end) {
+          const [first] = await reader.getBlocks(start, start);
+          if (first) pageIndex = firstPageIndex(first);
+        }
       }
 
       sections.push({
         title: entry.title,
         level: entry.level,
-        ...(typeof entry.pageIndex === "number"
-          ? { startPage: entry.pageIndex + 1 }
-          : {}),
+        ...(typeof pageIndex === "number" ? { startPage: pageIndex + 1 } : {}),
         ...(text === undefined ? {} : { text }),
         charCount,
       });
