@@ -3,9 +3,11 @@
  * unit tests wire the same objects in the same order.
  */
 
+import { AnnotationService } from "./annotationService";
 import { DocumentTextService } from "./documentTextService";
 import { ItemResolver } from "./itemResolver";
 import { MutationService } from "./mutationService";
+import { NoteService } from "./noteService";
 import { ReadService } from "./readService";
 import { SearchService } from "./searchService";
 import type { ZoteroGateway } from "./zoteroGateway";
@@ -20,5 +22,7 @@ export function createToolContext(gateway: ZoteroGateway): ToolContext {
     search: new SearchService(gateway, resolver),
     documents: new DocumentTextService(gateway),
     read: new ReadService(gateway),
+    notes: new NoteService(gateway, resolver),
+    annotations: new AnnotationService(gateway, resolver),
   };
 }

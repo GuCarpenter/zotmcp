@@ -192,3 +192,113 @@ export async function paperRead(
       );
   }
 }
+
+export async function noteWrite(
+  args: Args,
+  ctx: ToolContext,
+): Promise<ToolResult> {
+  const action = str(args, "action") ?? "create";
+
+  switch (action) {
+    case "create":
+      return jsonResult(
+        await ctx.mutations.enqueue("note create", () =>
+          ctx.notes.create(args.content, args.parentItemKey),
+        ),
+      );
+    case "update":
+      return jsonResult(
+        await ctx.mutations.enqueue("note update", () =>
+          ctx.notes.update(args.noteKey, args.content),
+        ),
+      );
+    case "append":
+      return jsonResult(
+        await ctx.mutations.enqueue("note append", () =>
+          ctx.notes.append(args.noteKey, args.content),
+        ),
+      );
+    default:
+      throw new InvalidArgumentError(
+        `Unknown action ${JSON.stringify(action)}: expected create, update or append.`,
+      );
+  }
+}
+
+export async function annotationWrite(
+  args: Args,
+  ctx: ToolContext,
+): Promise<ToolResult> {
+  const action = str(args, "action");
+  if (!action) {
+    throw new InvalidArgumentError(
+      '"action" is required: highlightText, areaRect, update or delete.',
+    );
+  }
+
+  if (action === "update") {
+    return jsonResult(
+      await ctx.mutations.enqueue("annotation update", () =>
+        ctx.annotations.update(args.annotationKey, {
+          comment: str(args, "comment"),
+          color: str(args, "color"),
+          tags: strArray(args, "tags"),
+        }),
+      ),
+    );
+  }
+
+  if (action === "delete") {
+    return jsonResult(
+      await ctx.mutations.enqueue("annotation delete", () =>
+        ctx.annotations.remove(args.annotationKey),
+      ),
+    );
+  }
+
+  const attachment = await ctx.resolver.resolveAttachment(args.attachmentKey);
+
+  switch (action) {
+    case "highlightText":
+      return jsonResult(
+        await ctx.mutations.enqueue("annotation highlight", () =>
+          ctx.annotations.highlightText(attachment, {
+            text: str(args, "text") ?? "",
+            comment: str(args, "comment"),
+            color: str(args, "color"),
+            tags: strArray(args, "tags"),
+          }),
+        ),
+      );
+    case "highlightRects":
+      return jsonResult(
+        await ctx.mutations.enqueue("annotation highlight", () =>
+          ctx.annotations.highlightRects(attachment, {
+            page: Number(args.page),
+            rects: args.rects as number[][],
+            text: str(args, "text"),
+            comment: str(args, "comment"),
+            color: str(args, "color"),
+            tags: strArray(args, "tags"),
+          }),
+        ),
+      );
+    case "areaRect":
+      return jsonResult(
+        await ctx.mutations.enqueue("annotation area", () =>
+          ctx.annotations.area(attachment, {
+            page: Number(args.page),
+            rects: args.rects as number[][],
+            comment: str(args, "comment"),
+            color: str(args, "color"),
+            tags: strArray(args, "tags"),
+          }),
+        ),
+      );
+    default:
+      throw new InvalidArgumentError(
+        `Unknown action ${JSON.stringify(action)}: expected highlightText, ` +
+          `highlightRects, areaRect, update or delete.`,
+      );
+  }
+}

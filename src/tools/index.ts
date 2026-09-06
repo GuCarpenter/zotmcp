@@ -8,7 +8,13 @@
  */
 
 import { ZotmcpError } from "../errors";
-import { libraryRead, librarySearch, paperRead } from "./readHandlers";
+import {
+  annotationWrite,
+  libraryRead,
+  librarySearch,
+  noteWrite,
+  paperRead,
+} from "./readHandlers";
 import { ToolRegistry, type ToolSpec } from "./registry";
 
 /** Canonical surface. The drift test compares the registry against this. */
@@ -299,15 +305,15 @@ const specs: ToolSpec[] = [
       },
       ["action"],
     ),
-    handler: pending("note_write", "Phase 6"),
+    handler: noteWrite,
   },
   {
     name: "annotation_write",
     description:
-      "Create, edit or remove annotations. Create a PDF highlight by quoting " +
-      "the exact text, a PDF area annotation from page rectangles, or an EPUB " +
-      "highlight positioned by generated CFI. Update changes comment, colour or " +
-      "tags; delete moves the annotation to the trash.",
+      "Create, edit or remove annotations. 'highlightText' quotes text and " +
+      "highlights the paragraph containing it; 'highlightRects' and 'areaRect' " +
+      "take exact page rectangles in PDF user space. Update changes comment, " +
+      "colour or tags; delete moves the annotation to the trash.",
     mutability: "write",
     inputSchema: OBJECT_SCHEMA(
       {
@@ -336,7 +342,7 @@ const specs: ToolSpec[] = [
       },
       ["action"],
     ),
-    handler: pending("annotation_write", "Phase 6"),
+    handler: annotationWrite,
   },
   {
     name: "zotero_script",

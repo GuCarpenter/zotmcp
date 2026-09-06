@@ -28,6 +28,8 @@ export interface FakeItem {
   attachmentIDs?: number[];
   noteIDs?: number[];
   json?: Record<string, unknown>;
+  note?: string;
+  parentKey?: string;
 }
 
 export interface FakeCollection {
@@ -66,6 +68,21 @@ export class FakeGateway implements ZoteroGateway {
   public fullTextSearchable = true;
   public cachePath: string | null = "/tmp/zotero-ft-cache";
   public attachmentPath: string | null = "/tmp/paper.pdf";
+  public keyCounter = 0;
+  public savedAnnotations: {
+    attachmentKey: string;
+    json: Record<string, unknown>;
+    saveOptions: Record<string, unknown>;
+  }[] = [];
+  public savedItems: { key: string; saveOptions: Record<string, unknown> }[] =
+    [];
+  public trashedItems: { key: string; saveOptions: Record<string, unknown> }[] =
+    [];
+  public createdNotes: {
+    key: string;
+    html: string;
+    parentKey: string | null;
+  }[] = [];
   public cacheText = "";
   public sdtReader: SdtReader | null = null;
   public pdfText: { text?: string; pageChars?: number[] } | null = null;
@@ -87,6 +104,8 @@ export class FakeGateway implements ZoteroGateway {
       attachmentIDs: item.attachmentIDs ?? [],
       noteIDs: item.noteIDs ?? [],
       json: item.json ?? {},
+      note: item.note ?? "",
+      parentKey: item.parentKey,
       key: item.key,
     };
     this.items.push(created);
@@ -168,6 +187,58 @@ export class FakeGateway implements ZoteroGateway {
 
   public async getAttachmentPath(_item: Zotero.Item): Promise<string | null> {
     return this.attachmentPath;
+  }
+
+  public generateObjectKey(): string {
+    this.keyCounter += 1;
+    return `NEWKEY${String(this.keyCounter).padStart(2, "0")}`;
+  }
+
+  public async saveAnnotation(
+    attachment: Zotero.Item,
+    json: Record<string, unknown>,
+    saveOptions: Record<string, unknown> = {},
+  ): Promise<Zotero.Item> {
+    this.savedAnnotations.push({
+      attachmentKey: attachment.key,
+      json,
+      saveOptions,
+    });
+    return {
+      ...(json as object),
+      key: json.key,
+      itemType: "annotation",
+      libraryID: USER_LIBRARY_ID,
+    } as unknown as Zotero.Item;
+  }
+
+  public async createNote(
+    html: string,
+    parent: Zotero.Item | null,
+  ): Promise<Zotero.Item> {
+    const key = this.generateObjectKey();
+    this.createdNotes.push({ key, html, parentKey: parent?.key ?? null });
+    const created = this.addItem({
+      key,
+      itemType: "note",
+      note: html,
+      parentKey: parent?.key,
+    });
+    return toZoteroItem(created) as unknown as Zotero.Item;
+  }
+
+  public async saveItem(
+    item: Zotero.Item,
+    saveOptions: Record<string, unknown> = {},
+  ): Promise<void> {
+    this.savedItems.push({ key: item.key, saveOptions });
+  }
+
+  public async trashItem(
+    item: Zotero.Item,
+    saveOptions: Record<string, unknown> = {},
+  ): Promise<void> {
+    this.trashedItems.push({ key: item.key, saveOptions });
   }
 
   public async readTextFile(_path: string): Promise<string> {
@@ -270,7 +341,12 @@ function toZoteroItem(item: FakeItem) {
     getAttachments: () => item.attachmentIDs ?? [],
     getNotes: () => item.noteIDs ?? [],
     getAnnotations: () => [],
-    getNote: () => "",
+    getNote: () => item.note ?? "",
+    setNote: (html: string) => {
+      item.note = html;
+    },
+    setTags: () => {},
+    saveTx: async () => {},
     toJSON: () => item.json ?? {},
   };
 }

@@ -32,7 +32,7 @@ export const UNDO_ACTIONS = {
 
 export type UndoAction = (typeof UNDO_ACTIONS)[keyof typeof UNDO_ACTIONS];
 
-export interface UndoLabel {
+export interface UndoLabel extends Record<string, unknown> {
   undoAction: UndoAction;
   undoActionArgs?: { count?: number };
 }

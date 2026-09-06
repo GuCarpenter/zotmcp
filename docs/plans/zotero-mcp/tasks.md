@@ -183,29 +183,31 @@ modules that make the spec's structural guarantees hold.
 
 ## Phase 6 — Annotations and notes
 
-- [ ] 6.1 `src/services/epubCfi.ts`: CFI generator — DOM-position-tracking
+- [ ] 6.1 (deferred) `src/services/epubCfi.ts`: CFI generator — DOM-position-tracking
       parser, element parity `(i+1)*2` / text-node parity `1+2*i`,
       `epubcfi(/6/<spine*2>!/<steps>,<start>,<end>)` assembly. Covers: A-3, U-4.
-- [ ] 6.2 `test/unit/epubCfi.test.ts`: fixture-based parity and offset tests —
+- [ ] 6.2 (deferred) `test/unit/epubCfi.test.ts`: fixture-based parity and offset tests —
       the failure mode here is a silently misplaced highlight. Covers: A-3.
-- [ ] 6.3 `src/services/annotationService.ts`: create PDF highlight by locating
-      text and deriving rects; **error rather than guess** when exact rects
-      cannot be derived. Covers: A-1.
-- [ ] 6.4 `annotationService`: create area annotation from caller-supplied
+- [x] 6.3 `src/services/annotationService.ts`: highlight by locating text. SDT
+      exports no glyph-geometry decoder, so rects come from the containing
+      block's anchor and the result reports `granularity: "block"` plus a note.
+      Ambiguous or absent text is refused rather than placed by guess.
+      Covers: A-1 (partially — see design note).
+- [x] 6.4 `annotationService`: create area annotation from caller-supplied
       PDF-user-space rects + page. Covers: A-2.
-- [ ] 6.5 `annotationService`: create EPUB highlight storing the CFI in a WADM
+- [ ] 6.5 (deferred) `annotationService`: create EPUB highlight storing the CFI in a WADM
       `FragmentSelector`; return the CFI in the result. Covers: A-3, U-4.
-- [ ] 6.6 `annotationService`: update (comment, color, tags) and delete (trash) by
+- [x] 6.6 `annotationService`: update (comment, color, tags) and delete (trash) by
       annotation key; reject non-PDF/non-EPUB attachments naming the content
       type. Covers: A-4, A-5.
-- [ ] 6.7 `src/tools/annotationWrite.ts`: modal schema over create-text /
+- [x] 6.7 `src/tools/annotationWrite.ts`: modal schema over create-text /
       create-rect / create-epub / update / delete; route through the write queue;
       return keys and URIs. Covers: A-1..A-5, U-3, E-2.
-- [ ] 6.8 `src/services/noteService.ts`: Markdown→Zotero note HTML via `marked`
+- [x] 6.8 `src/services/noteService.ts`: Markdown→Zotero note HTML via `marked`
       plus sanitization; create / update / append. Covers: A-6.
-- [ ] 6.9 `src/tools/noteWrite.ts`: parent item or attachment context, correct
+- [x] 6.9 `src/tools/noteWrite.ts`: parent item or attachment context, correct
       child parenting. Covers: A-6, A-7.
-- [ ] 6.10 `test/unit/noteService.test.ts`: Markdown conversion, append
+- [x] 6.10 `test/unit/noteService.test.ts`: Markdown conversion, append
       idempotence, sanitization. Covers: A-6.
 
 ## Phase 7 — Writes

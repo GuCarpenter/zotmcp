@@ -48,6 +48,34 @@ export interface ZoteroGateway {
 
   /** Absolute path of an attachment's file, or null when missing/unlinked. */
   getAttachmentPath(item: Zotero.Item): Promise<string | null>;
+
+  /** A fresh 8-character Zotero object key. */
+  generateObjectKey(): string;
+
+  /**
+   * Creates or updates an annotation from Zotero's own annotation JSON. Save
+   * options are forwarded, so an undo label reaches `saveTx`.
+   */
+  saveAnnotation(
+    attachment: Zotero.Item,
+    json: Record<string, unknown>,
+    saveOptions?: Record<string, unknown>,
+  ): Promise<Zotero.Item>;
+
+  /** Creates a note item, attached to `parent` when given. */
+  createNote(html: string, parent: Zotero.Item | null): Promise<Zotero.Item>;
+
+  /** Saves an already-modified item. */
+  saveItem(
+    item: Zotero.Item,
+    saveOptions?: Record<string, unknown>,
+  ): Promise<void>;
+
+  /** Moves an item to the trash, which Zotero can undo. */
+  trashItem(
+    item: Zotero.Item,
+    saveOptions?: Record<string, unknown>,
+  ): Promise<void>;
   readTextFile(path: string, maxLength?: number): Promise<string>;
 
   /**
@@ -249,6 +277,60 @@ export class RealZoteroGateway implements ZoteroGateway {
       // A linked file whose target moved is a normal state, not a failure.
       return null;
     }
+  }
+
+  public generateObjectKey(): string {
+    return (
+      Zotero as unknown as {
+        DataObjectUtilities: { generateKey(): string };
+      }
+    ).DataObjectUtilities.generateKey();
+  }
+
+  public async saveAnnotation(
+    attachment: Zotero.Item,
+    json: Record<string, unknown>,
+    saveOptions: Record<string, unknown> = {},
+  ): Promise<Zotero.Item> {
+    return (
+      Zotero as unknown as {
+        Annotations: {
+          saveFromJSON(
+            attachment: Zotero.Item,
+            json: Record<string, unknown>,
+            saveOptions?: Record<string, unknown>,
+          ): Promise<Zotero.Item>;
+        };
+      }
+    ).Annotations.saveFromJSON(attachment, json, saveOptions);
+  }
+
+  public async createNote(
+    html: string,
+    parent: Zotero.Item | null,
+  ): Promise<Zotero.Item> {
+    const note = new Zotero.Item("note");
+    note.libraryID = this.userLibraryID;
+    if (parent) note.parentID = parent.id;
+    note.setNote(html);
+    await note.saveTx();
+    return note;
+  }
+
+  public async saveItem(
+    item: Zotero.Item,
+    saveOptions: Record<string, unknown> = {},
+  ): Promise<void> {
+    await item.saveTx(saveOptions as never);
+  }
+
+  public async trashItem(
+    item: Zotero.Item,
+    saveOptions: Record<string, unknown> = {},
+  ): Promise<void> {
+    // Trashing only flips the deleted flag, which is why Zotero can undo it.
+    (item as unknown as { deleted: boolean }).deleted = true;
+    await item.saveTx(saveOptions as never);
   }
 
   public async readTextFile(path: string, maxLength?: number): Promise<string> {

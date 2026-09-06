@@ -4,9 +4,11 @@
  * (spec S-9).
  */
 
+import type { AnnotationService } from "../services/annotationService";
 import type { DocumentTextService } from "../services/documentTextService";
 import type { ItemResolver } from "../services/itemResolver";
 import type { MutationService } from "../services/mutationService";
+import type { NoteService } from "../services/noteService";
 import type { ReadService } from "../services/readService";
 import type { SearchService } from "../services/searchService";
 import type { ZoteroGateway } from "../services/zoteroGateway";
@@ -20,6 +22,8 @@ export interface ToolContext {
   search: SearchService;
   documents: DocumentTextService;
   read: ReadService;
+  notes: NoteService;
+  annotations: AnnotationService;
 }
 
 export interface ToolTextContent {
