@@ -51,6 +51,16 @@ external scholarly search, no undo, writes enabled by default.
   external literature search. **[PA]**
 - **S-13** Non-ASCII text (CJK, accents, emoji) survives a round trip through
   search, read, note write, and annotation create. **[PA: T's UTF-8 bug class]**
+- **S-14** The endpoint does **not** set `allowRequestsFromUnsafeWebContent`.
+  Zotero 10's local-server hardening therefore applies: a request with a
+  browser-like `User-Agent` or any `Origin` header is dropped unless it sends
+  `Zotero-Allowed-Request`, and a request whose `Host` is not `localhost`,
+  `127.0.0.1` or `[::1]` is refused. This is the primary mitigation for ungated
+  writes, so re-enabling web content requires a scope decision, not a code
+  change. Client-facing docs must state the header requirements.
+- **S-15** The manifest declares `strict_max_version` covering the Zotero
+  versions the plugin is tested against; Zotero enforces it in release builds, so
+  an un-bumped maximum silently disables the plugin after a Zotero upgrade.
 
 ### T — Tool surface (exhaustive)
 

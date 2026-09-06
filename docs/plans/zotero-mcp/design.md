@@ -67,8 +67,9 @@ documented at `pdfContext.ts:484-486`.
 ### Verified — Zotero 8 platform (spike 0.1)
 
 Zotero 8 is built on **Firefox 140 ESR** (Zotero 7.0 = 115, the "7.1" beta =
-128), so the esbuild target is `firefox140`. Platform changes that touch this
-design:
+128), so the esbuild target is `firefox140`. Zotero 9 and 10 keep the same
+Firefox 140 base, so the target is correct across 8, 9 and 10. Platform changes
+that touch this design:
 
 - All Zotero/Mozilla modules are ESMs (`.mjs` / `.sys.mjs`); Bluebird is gone and
   `Zotero.Promise` is a standard promise. The design already assumes standard
@@ -81,6 +82,66 @@ design:
   informational, not a code change.
 - `Zotero.platformMajorVersion` distinguishes 115 / 128 / 140 if a runtime check
   is ever needed.
+
+### Verified — Zotero 10 platform (found when the XPI refused to install)
+
+Zotero enforces `strict_max_version` in release builds, so `10.0.*` is required
+to run on Zotero 10. Zotero 9 introduced no developer-facing changes; Zotero 10
+introduced several that bear directly on this plugin.
+
+**Local HTTP server hardening — affects the transport.** Zotero 10 now:
+
+- returns 400 unless the request's `Host` header is `localhost`, `127.0.0.1` or
+  `[::1]`;
+- **drops without a response** any request that looks browser-originated — a
+  `User-Agent` starting with `Mozilla/`, or _any_ `Origin` header — unless it
+  sends a `Zotero-Allowed-Request` header or comes from the connector. This
+  previously applied only to CORS-simple content types, so a JSON POST that
+  worked before can now be rejected.
+- lets an endpoint opt out via `allowRequestsFromUnsafeWebContent = true`.
+
+Two consequences. First, **this materially reduces the largest risk in the
+proposal**: with writes ungated, a web page reaching port 23119 was the real
+exposure, and Zotero now blocks exactly that. The endpoint therefore must **not**
+set `allowRequestsFromUnsafeWebContent` — that flag would re-open the hole this
+design was worried about. Second, MCP clients must present a non-browser
+`User-Agent` and no `Origin`, or send `Zotero-Allowed-Request`; this belongs in
+the README and in any client-config guidance.
+
+**Search API — affects Phase 4.** The design's "resolve to parents" step is
+obsolete: Zotero 10 has `resultLevel` (`item` | `attachment` | `note` |
+`annotation`), which is the supported way to make `fulltextContent` and
+annotation conditions return owning items. Also: condition groups
+(`groupStart`/`groupEnd` with a `joinMode`) replace the flat AND/OR model, so
+`conditions[]` can express nested logic; `addCondition()` throws if the legacy
+`required` argument is truthy; the `fulltextWord` condition was removed and
+`fulltextContent` is now backed by a real index and fast enough for general use;
+`childNote` is deprecated in favour of `note` with `resultLevel: 'item'`; and new
+conditions exist for annotation properties, item/tag counts and
+`isEmpty`/`isNotEmpty`.
+
+**Full-text search was rewritten on SQLite FTS5**, with the content and note
+indexes in a separate attached `ftindex` database and various `Zotero.FullText`
+methods removed or replaced. The exact surviving API must be checked when
+implementing SR-5 and the `pdfService` fallback (R-2) — the design's reference to
+"Zotero's full-text cache/index" is a capability, not a confirmed method name.
+
+**Zotero 10 has native undo/redo** for modifications to existing objects, via
+`item.saveTx({ undoAction, undoActionArgs })` or
+`Zotero.UndoHistory.stageAction()` inside a transaction. Undo was dropped from
+scope because a durable journal was out of scope; Zotero 10 offers most of the
+benefit for the cost of one argument per save, which is worth revisiting given
+that writes are ungated. Creating or permanently deleting an object is not
+undoable; trashing is.
+
+**Item data validation now throws** where it used to corrupt: `setType()` and
+`setField('itemTypeID')` reject converting a regular item to or from an
+attachment, note or annotation, and the `attachmentFilename`/`attachmentPath`
+setters reject a stored-file path containing a slash. Both land on Phase 7
+(W-4, W-13).
+
+**Plugin FTL registration was reworked** with per-locale fallback, which affects
+Phase 9's preferences pane.
 
 ### Unverified — design assumptions
 
