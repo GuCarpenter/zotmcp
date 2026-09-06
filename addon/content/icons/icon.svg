@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" width="96" height="96" role="img" aria-label="zotmcp">
+  <!-- Tile -->
+  <rect width="96" height="96" rx="20" fill="#2f3d4f"/>
+
+  <!-- A document, for the library half of the idea. Thick shapes only, so the
+       silhouette survives being scaled down to 48px. -->
+  <rect x="13" y="11" width="41" height="45" rx="6" fill="#f4f1ea"/>
+  <g fill="#2f3d4f">
+    <rect x="20" y="21" width="27" height="6" rx="3"/>
+    <rect x="20" y="33" width="19" height="6" rx="3"/>
+  </g>
+
+  <!-- A served endpoint. The arcs are concentric on the node and sweep clockwise
+       (flag 1), so they radiate away from it; sweeping the other way bulges them
+       backwards and the glyph reads as a check mark. -->
+  <g fill="none" stroke="#e8a33d" stroke-width="7" stroke-linecap="round">
+    <path d="M53 77 A 16 16 0 0 1 69 61"/>
+    <path d="M42 77 A 27 27 0 0 1 69 50"/>
+  </g>
+  <circle cx="69" cy="77" r="6.5" fill="#e8a33d"/>
+</svg>

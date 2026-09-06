@@ -103,6 +103,7 @@ function registerPreferencePane(): void {
       pluginID: config.addonID,
       src: `${rootURI}content/preferences.xhtml`,
       label: config.addonName,
+      image: `${rootURI}content/icons/icon-48.png`,
     });
   } catch (e) {
     // A missing preferences pane is cosmetic; the endpoint still works.

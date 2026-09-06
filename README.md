@@ -84,6 +84,18 @@ highlight covers the paragraph containing the quote and reports
 `granularity: "block"`, because character-precise geometry is not available from
 that data.
 
+## Icon
+
+`addon/content/icons/icon.svg` is the source; the PNGs beside it are rendered
+from it:
+
+```sh
+for s in 32 48 96; do
+  inkscape --export-type=png --export-filename=addon/content/icons/icon-$s.png \
+    --export-width=$s --export-height=$s addon/content/icons/icon.svg
+done
+```
+
 ## Development
 
 ```sh
