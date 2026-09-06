@@ -64,6 +64,24 @@ Zotero's own full-text index (`Zotero.Fulltext`) is the fallback when
 `PDFWorker` returns nothing despite indexed text existing — a real case
 documented at `pdfContext.ts:484-486`.
 
+### Verified — Zotero 8 platform (spike 0.1)
+
+Zotero 8 is built on **Firefox 140 ESR** (Zotero 7.0 = 115, the "7.1" beta =
+128), so the esbuild target is `firefox140`. Platform changes that touch this
+design:
+
+- All Zotero/Mozilla modules are ESMs (`.mjs` / `.sys.mjs`); Bluebird is gone and
+  `Zotero.Promise` is a standard promise. The design already assumes standard
+  promises throughout.
+- Preference panes run in their own global scope — Phase 9 must attach shared
+  state to `window` explicitly, or use `Zotero_Preferences.getScope(paneId)`.
+  Button labels must be set via the `label` property, not the attribute.
+- The first segment of a `zotero:` URI is now parsed as its _host_, not part of
+  the path. `uriService` only emits URI strings for clients, so this is
+  informational, not a code change.
+- `Zotero.platformMajorVersion` distinguishes 115 / 128 / 140 if a runtime check
+  is ever needed.
+
 ### Unverified — design assumptions
 
 - **EPUB.** No prior art in-plugin. Design assumes reading the file and parsing

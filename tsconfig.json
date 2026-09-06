@@ -1,0 +1,8 @@
+{
+  "extends": "zotero-types/entries/sandbox/",
+  "compilerOptions": {
+    "types": ["zotero-types/entries/sandbox", "mocha", "node"]
+  },
+  "include": ["src", "typings", "test"],
+  "exclude": [".scaffold", "addon"]
+}

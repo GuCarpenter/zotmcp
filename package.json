@@ -1,0 +1,49 @@
+{
+  "name": "zotmcp",
+  "type": "module",
+  "version": "0.1.0",
+  "description": "MCP server embedded in Zotero: search, read, annotate and manage My Library from any MCP client",
+  "config": {
+    "addonName": "Zotmcp",
+    "addonID": "zotmcp@anyinlover.github.io",
+    "addonRef": "zotmcp",
+    "addonInstance": "Zotmcp",
+    "prefsPrefix": "extensions.zotero.zotmcp"
+  },
+  "author": "guhangsong",
+  "license": "AGPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/anyinlover/zotmcp.git"
+  },
+  "scripts": {
+    "start": "zotero-plugin serve",
+    "build": "zotero-plugin build && npm run typecheck",
+    "typecheck": "tsc --noEmit",
+    "lint:check": "prettier --check . && eslint .",
+    "lint:fix": "prettier --write . && eslint . --fix",
+    "test": "npm run typecheck && npm run test:unit",
+    "test:unit": "tsx node_modules/mocha/bin/mocha.js --require ./test/register.cjs 'test/unit/**/*.test.ts'",
+    "test:integration": "zotero-plugin test",
+    "release": "zotero-plugin release"
+  },
+  "dependencies": {
+    "fflate": "^0.8.3",
+    "marked": "^18.0.11",
+    "zotero-plugin-toolkit": "^5.2.0"
+  },
+  "devDependencies": {
+    "@types/chai": "^5.2.3",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^24.10.0",
+    "@zotero-plugin/eslint-config": "^0.6.10",
+    "chai": "^6.2.2",
+    "eslint": "^9.39.2",
+    "mocha": "^12.0.0",
+    "prettier": "^3.7.4",
+    "tsx": "^4.23.13",
+    "typescript": "^5.9.3",
+    "zotero-plugin-scaffold": "^0.9.1",
+    "zotero-types": "^4.1.3"
+  }
+}

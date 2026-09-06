@@ -10,27 +10,28 @@ phase can be verified end to end against a real MCP client.
 
 ## Phase 0 — Spike
 
-- [ ] 0.1 Confirm Zotero 8's Gecko/Firefox base and set the esbuild target
-      accordingly (`firefox115` as conservative floor). Record the finding in
-      `design.md` under design assumptions.
+- [x] 0.1 Confirm Zotero 8's Gecko/Firefox base and set the esbuild target
+      accordingly. **Result: Zotero 8 is built on Firefox 140 ESR** (Zotero 7.0 =
+      115, the "7.1" beta = 128), per Zotero 8 for Developers. Target set to
+      `firefox140`. Related platform facts recorded in `design.md`.
 
 ## Phase 1 — Project skeleton
 
-- [ ] 1.1 `package.json`: scaffold + esbuild + TypeScript + mocha; deps
+- [x] 1.1 `package.json`: scaffold + esbuild + TypeScript + mocha; deps
       `zotero-plugin-toolkit`, `fflate` (EPUB unzip), `marked` (Markdown→HTML).
       Scripts: `build` (`zotero-plugin build && tsc --noEmit`), `start`, `test`,
       `test:unit`.
-- [ ] 1.2 `tsconfig.json`, `eslint`/`prettier` config, `.gitignore`
+- [x] 1.2 `tsconfig.json`, `eslint`/`prettier` config, `.gitignore`
       (include `.scaffold/`).
-- [ ] 1.3 `addon/manifest.json`: WebExtension-style manifest, addon ID,
+- [x] 1.3 `addon/manifest.json`: WebExtension-style manifest, addon ID,
       `strict_min_version` 8.0. Covers: proposal decision (Zotero 8 minimum).
-- [ ] 1.4 `addon/bootstrap.js` + `zotero-plugin.config.ts`: entry `src/index.ts`,
+- [x] 1.4 `addon/bootstrap.js` + `zotero-plugin.config.ts`: entry `src/index.ts`,
       bundle output, target from task 0.1.
-- [ ] 1.5 `addon/prefs.js`: `mcp.server.enabled` default `true`. No write gate
+- [x] 1.5 `addon/prefs.js`: `mcp.server.enabled` default `true`. No write gate
       pref. Covers: S-2, S-11.
-- [ ] 1.6 `typings/`: minimal ambient declarations for `Zotero`, `IOUtils`, and
+- [x] 1.6 `typings/`: minimal ambient declarations for `Zotero`, `IOUtils`, and
       the `Zotero.Server` endpoint contract.
-- [ ] 1.7 Verify `npm run build` produces an XPI and `tsc --noEmit` is clean.
+- [x] 1.7 Verify `npm run build` produces an XPI and `tsc --noEmit` is clean.
 
 ## Phase 2 — Gateway and cross-cutting services
 
@@ -216,7 +217,7 @@ modules that make the spec's structural guarantees hold.
       in place; add/remove membership. Covers: W-10, W-11.
 - [ ] 7.12 `src/tools/collectionUpdate.ts`: action facade. Covers: W-10, W-11.
 - [ ] 7.13 `src/tools/libraryDelete.ts` + service: `mode: trash | restore |
-    merge` (merge into a designated master). Covers: W-12.
+merge` (merge into a designated master). Covers: W-12.
 - [ ] 7.14 `src/tools/attachmentUpdate.ts` + service: rename file on disk, relink
       to a new path, delete (trash); `FileMissingError` when the file is absent.
       Covers: W-13, E-1.

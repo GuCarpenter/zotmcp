@@ -1,0 +1,5 @@
+.scaffold
+node_modules
+package-lock.json
+typings/i10n.d.ts
+typings/prefs.d.ts
