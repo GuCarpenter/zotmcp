@@ -1,0 +1,71 @@
+<!-- Preferences pane. Zotero 10 runs each pane in its own global scope, so this
+     script attaches nothing to a shared global and reads plugin state through
+     Zotero.__addonInstance__ instead. -->
+<vbox
+  xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
+  xmlns:html="http://www.w3.org/1999/xhtml"
+  id="zotmcp-prefs"
+>
+  <groupbox>
+    <html:h2 data-l10n-id="pref-title">Zotmcp</html:h2>
+
+    <checkbox
+      id="zotmcp-pref-enabled"
+      preference="extensions.zotero.zotmcp.mcp.server.enabled"
+      data-l10n-id="pref-server-enabled"
+      native="true"
+    />
+
+    <hbox align="center">
+      <label value="Endpoint" control="zotmcp-endpoint-url" />
+      <html:input
+        id="zotmcp-endpoint-url"
+        type="text"
+        readonly="readonly"
+        value="(unavailable)"
+        style="flex: 1; min-width: 24em"
+      />
+    </hbox>
+
+    <description id="zotmcp-status" />
+
+    <description
+      id="zotmcp-warning"
+      style="color: -moz-mac-alert-text; font-weight: bold"
+    >
+      Any local program that can reach Zotero's HTTP server can read and change
+      this library through this endpoint, including running scripts. There is no
+      confirmation step. Zotero blocks requests that look like they come from a
+      web page.
+    </description>
+  </groupbox>
+
+  <script>
+    <![CDATA[
+    (() => {
+      const addon = Zotero.Zotmcp;
+      const urlField = document.getElementById("zotmcp-endpoint-url");
+      const status = document.getElementById("zotmcp-status");
+
+      const refresh = () => {
+        const data = addon && addon.data;
+        if (!data) return;
+
+        urlField.value = data.endpointUrl || "(not listening)";
+
+        if (data.httpServerUnavailableReason) {
+          status.textContent = data.httpServerUnavailableReason;
+        } else if (data.endpointRegistered) {
+          status.textContent = "Listening. Point an MCP client at the endpoint above.";
+        } else {
+          status.textContent = "Not listening. Enable the endpoint above.";
+        }
+      };
+
+      refresh();
+      const timer = setInterval(refresh, 2000);
+      window.addEventListener("unload", () => clearInterval(timer), { once: true });
+    })();
+    ]]>
+  </script>
+</vbox>

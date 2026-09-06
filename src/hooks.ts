@@ -48,6 +48,7 @@ export async function onStartup(): Promise<void> {
 
   startOrStopServer();
   watchServerPref();
+  registerPreferencePane();
 }
 
 export async function onShutdown(): Promise<void> {
@@ -88,6 +89,25 @@ export function startOrStopServer(): void {
   addon.data.endpointRegistered = registration.registered;
   addon.data.endpointUrl = registration.url;
   addon.data.httpServerUnavailableReason = registration.reason;
+}
+
+function registerPreferencePane(): void {
+  try {
+    (
+      Zotero as unknown as {
+        PreferencePanes: {
+          register(options: Record<string, unknown>): Promise<void> | void;
+        };
+      }
+    ).PreferencePanes.register({
+      pluginID: config.addonID,
+      src: `${rootURI}content/preferences.xhtml`,
+      label: config.addonName,
+    });
+  } catch (e) {
+    // A missing preferences pane is cosmetic; the endpoint still works.
+    addon.data.gateway?.log("WARN could not register the preferences pane", e);
+  }
 }
 
 function watchServerPref(): void {

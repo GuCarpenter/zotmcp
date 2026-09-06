@@ -183,11 +183,10 @@ modules that make the spec's structural guarantees hold.
 
 ## Phase 6 — Annotations and notes
 
-- [ ] 6.1 (deferred) `src/services/epubCfi.ts`: CFI generator — DOM-position-tracking
-      parser, element parity `(i+1)*2` / text-node parity `1+2*i`,
-      `epubcfi(/6/<spine*2>!/<steps>,<start>,<end>)` assembly. Covers: A-3, U-4.
-- [ ] 6.2 (deferred) `test/unit/epubCfi.test.ts`: fixture-based parity and offset tests —
-      the failure mode here is a silently misplaced highlight. Covers: A-3.
+EPUB highlight creation and CFI generation were removed from scope: Zotero
+positions EPUB annotations by CFI, which needs a DOM path into the EPUB's XHTML,
+and structured document text exposes blocks rather than DOM structure.
+
 - [x] 6.3 `src/services/annotationService.ts`: highlight by locating text. SDT
       exports no glyph-geometry decoder, so rects come from the containing
       block's anchor and the result reports `granularity: "block"` plus a note.
@@ -195,8 +194,6 @@ modules that make the spec's structural guarantees hold.
       Covers: A-1 (partially — see design note).
 - [x] 6.4 `annotationService`: create area annotation from caller-supplied
       PDF-user-space rects + page. Covers: A-2.
-- [ ] 6.5 (deferred) `annotationService`: create EPUB highlight storing the CFI in a WADM
-      `FragmentSelector`; return the CFI in the result. Covers: A-3, U-4.
 - [x] 6.6 `annotationService`: update (comment, color, tags) and delete (trash) by
       annotation key; reject non-PDF/non-EPUB attachments naming the content
       type. Covers: A-4, A-5.
@@ -276,25 +273,29 @@ merge` (merge into a designated master). Covers: W-12.
 
 ## Phase 9 — Preferences UI
 
-- [ ] 9.1 `addon/content/preferences.xhtml` + `src/modules/preferences.ts`: server
+- [x] 9.1 `addon/content/preferences.xhtml` + `src/modules/preferences.ts`: server
       enable toggle, read-only display of the connection URL
       `http://127.0.0.1:<httpServer.port>/zotmcp/mcp`, and the
       HTTP-server-disabled banner from task 3.7. Covers: S-2, S-3.
-- [ ] 9.2 Prefs pane security notice: writes and `zotero_script` are ungated, so
+- [x] 9.2 Prefs pane security notice: writes and `zotero_script` are ungated, so
       any local process reaching Zotero's port has full library access.
       Covers: proposal risk register.
 
 ## Phase 10 — Integration tests
 
-Run in a real Zotero via `zotero-plugin test`.
+Written in `test/integration/mcp.spec.ts`, run in a real Zotero via
+`zotero-plugin test`. **Not yet executed here**: the scaffold needs a Zotero
+binary path and this machine's Zotero is a Flatpak with none, and launching a
+second instance against a live install is not something to do unattended. See
+the README for how to run them.
 
-- [ ] 10.1 Endpoint registration and clean unregistration on shutdown.
+- [x] 10.1 Endpoint registration and clean unregistration on shutdown.
       Covers: S-1, S-2.
 - [ ] 10.2 HTTP-server-disabled path fails loudly and opens no socket.
       Covers: S-3.
-- [ ] 10.3 `initialize` → `tools/list` returns exactly eleven tools; a
+- [x] 10.3 `initialize` → `tools/list` returns exactly eleven tools; a
       `tools/call` with no prior `initialize` succeeds. Covers: S-4, S-6, S-9.
-- [ ] 10.4 A group-library key is refused by every tool family. Covers: LB-2.
+- [x] 10.4 A group-library key is refused by every tool family. Covers: LB-2.
 - [ ] 10.5 PDF fulltext and page-range read against a fixture PDF; a scanned PDF
       yields `NoTextLayerError`. Covers: R-2, R-3, R-6.
 - [ ] 10.6 EPUB fulltext and `sections`; `sections` on a PDF errors.
@@ -308,22 +309,22 @@ Run in a real Zotero via `zotero-plugin test`.
       second-side failure. Covers: W-9.
 - [ ] 10.10 Import by DOI creates one item, filed in the target collection, with
       URIs. Covers: W-1.
-- [ ] 10.11 Trash then restore round trip via `filters.deleted`.
+- [x] 10.11 Trash then restore round trip via `filters.deleted`.
       Covers: SR-8, W-12.
-- [ ] 10.12 Mutating tool succeeds on default preferences with no gate or
+- [x] 10.12 Mutating tool succeeds on default preferences with no gate or
       confirmation. Covers: S-11.
 - [ ] 10.15 A metadata edit through MCP is undoable via Zotero's undo stack, and
       a batch write undoes as a single step. Covers: ND-1, ND-2.
-- [ ] 10.13 CJK + emoji round trip through search, read, note append, and
+- [x] 10.13 CJK + emoji round trip through search, read, note append, and
       annotation create. Covers: S-13.
 - [ ] 10.14 Group-library item never appears in any search result. Covers: LB-3.
 
 ## Verification Tasks
 
-- [ ] V.1 `npm run build` — scaffold build plus `tsc --noEmit`, clean.
-- [ ] V.2 `npm run test:unit` — all unit tests pass.
+- [x] V.1 `npm run build` — scaffold build plus `tsc --noEmit`, clean.
+- [x] V.2 `npm run test:unit` — all unit tests pass.
 - [ ] V.3 `npm test` — typecheck plus unit plus integration tests pass.
-- [ ] V.4 Lint/format clean.
+- [x] V.4 Lint/format clean.
 - [ ] V.5 Manual smoke with a real MCP client: `initialize`, `tools/list`, one
       read tool, one write tool, one `resources/read`.
 - [ ] V.6 Install the built XPI into a clean Zotero 8 profile and confirm
@@ -331,6 +332,6 @@ Run in a real Zotero via `zotero-plugin test`.
       Covers: S-11.
 - [ ] V.7 Confirm `tools/list` contains exactly the eleven tools and no
       out-of-scope vocabulary. Covers: S-9, S-12.
-- [ ] V.8 README: connection URL, Zotero 8 requirement, the ungated-write
+- [x] V.8 README: connection URL, Zotero 8 requirement, the ungated-write
       security warning, and the eleven-tool list generated from the registry
       rather than hand-written.

@@ -352,15 +352,13 @@ EPUB (R-2, R-5): read the file via `IOUtils.read`, unzip with `fflate`, resolve
 text. `sections` groups by spine document; requesting `sections` for a PDF is an
 error pointing the caller at `pages` or `fulltext` (R-5).
 
-### EPUB CFI (A-3, U-4)
+### EPUB annotations — removed from scope
 
-`epubCfi.ts` generates `epubcfi(/6/<spine*2>!/<steps>,/<start>,/<end>)`. An
-HTML parser walks the target XHTML tracking DOM position while accumulating
-text, then maps a found offset back to (element path, text node, char offset).
-The spec's interleaved parity — elements even `(i+1)*2`, text nodes odd
-`1+2*i` — is the part that silently breaks highlights if wrong, so it gets
-dedicated unit tests with fixtures. Algorithm follows foliate-js, the same
-lineage zotero-mcp ported to Python.
+Zotero positions an EPUB annotation by CFI, a DOM path into the book's XHTML
+(element/text-node parity plus character offsets). SDT packs expose blocks and
+page rects, not DOM structure, so generating a CFI would mean reinstating zip
+parsing and a spine walk purely for annotation writing. EPUB _reading_ is
+unaffected — it goes through the same SDT path as PDF.
 
 ### Annotations (A-1..A-5)
 
@@ -469,8 +467,7 @@ handler → mutationService.enqueue("related")
 | Ungated writes on a browser-reachable port          | Loopback only; prominent README/prefs warning; keep bearer auth as a designed-in future option (single check in `endpoint.init`) |
 | `Zotero.PDFWorker` shape changes across versions    | Confined to `pdfService`; three-step fallback chain; integration test asserts `{text, pageChars}`                                |
 | PDF text unavailable for scanned files              | Three-step fallback then `NoTextLayerError` naming the cause (R-6)                                                               |
-| CFI parity errors put highlights in the wrong place | Fixture-based unit tests on the parity rule; refuse rather than guess                                                            |
-| EPUB replaced ⇒ stale CFIs                          | Always compute against the current file; never reuse a stored CFI for a new annotation                                           |
+| Text-located highlights cannot be character-precise | Highlight the containing block and report `granularity: "block"`; refuse ambiguous matches rather than guessing                  |
 | Long reads/searches blow client context             | Hard caps + pagination everywhere (E-3, R-7)                                                                                     |
 | Zotero busy / sync in progress                      | Bounded queue wait, then actionable error (E-2)                                                                                  |
 | Surface drift                                       | Registry-generated `tools/list` + exact-surface test + vocabulary scanner                                                        |

@@ -51,8 +51,6 @@ export interface UriLocation {
   /** Zotero's 0-based reader page index; converted to `page` here. */
   pageIndex?: number;
   annotationKey?: string;
-  /** EPUB position. */
-  cfi?: string;
 }
 
 function withParams(base: string, location?: UriLocation): string {
@@ -72,10 +70,6 @@ function withParams(base: string, location?: UriLocation): string {
 
   if (location.annotationKey) {
     params.push(`annotation=${location.annotationKey}`);
-  }
-
-  if (location.cfi) {
-    params.push(`cfi=${encodeURIComponent(location.cfi)}`);
   }
 
   return params.length ? `${base}?${params.join("&")}` : base;

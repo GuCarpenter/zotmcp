@@ -84,7 +84,7 @@ supplied by Zotero's own undo stack.
 | 7   | `library_delete`    | trash, restore, merge duplicates                                                                                                      |
 | 8   | `attachment_update` | rename, relink, delete                                                                                                                |
 | 9   | `note_write`        | create, update, append (Markdown → HTML)                                                                                              |
-| 10  | `annotation_write`  | create text highlight, create area annotation, EPUB CFI highlight, update, delete                                                     |
+| 10  | `annotation_write`  | create text highlight, create area annotation, update, delete                                                                         |
 | 11  | `zotero_script`     | arbitrary privileged JS, `mode: read \| write`                                                                                        |
 
 ### LB — Library scope
@@ -106,8 +106,7 @@ supplied by Zotero's own undo stack.
 - **U-3** Results carrying a page location include a URI with `?page=N` using
   1-based page numbers; results carrying an annotation identity include
   `?annotation=KEY`. Both parameters combine when both are known.
-- **U-4** EPUB annotation results include the generated CFI as a field so callers
-  can construct `?cfi=` links.
+- **U-4** _(removed — EPUB annotation writing is out of scope.)_
 - **U-5** URIs use the `library` path segment consistently; no code path emits a
   `groups/` URI. **[PA: T emits the wrong form for group items — here the class
   of bug is removed by scope]**
@@ -167,9 +166,9 @@ supplied by Zotero's own undo stack.
   reader.
 - **A-2** create-with-rect creates an area annotation from a PDF-user-space
   rectangle (origin bottom-left, points) on a given page.
-- **A-3** create-epub locates text in an EPUB and creates a highlight whose WADM
-  annotation stores an `epubcfi(...)` value in a `FragmentSelector`; the
-  highlight renders in Zotero's EPUB reader.
+- **A-3** _(removed — EPUB highlight creation is out of scope. Zotero positions
+  EPUB annotations by CFI, which requires a DOM path into the EPUB's XHTML;
+  structured document text exposes blocks, not DOM structure.)_
 - **A-4** update modifies an existing annotation's comment, color, or tags by
   annotation key.
 - **A-5** delete trashes an annotation by key.
@@ -308,14 +307,6 @@ Then a Zotero annotation child item exists, renders over that sentence in the
 reader, and the result includes its key and an `?annotation=KEY` URI.
 (A-1, U-3)
 
-### Scenario: EPUB CFI highlight round trip
-
-Given an EPUB attachment
-When `annotation_write` creates an EPUB highlight on a quoted passage
-Then the stored annotation's WADM `FragmentSelector` contains an `epubcfi(...)`
-value, the highlight renders in Zotero's EPUB reader, and the CFI is returned in
-the result. (A-3, U-4)
-
 ### Scenario: related-link atomicity
 
 Given items A and B with no relation, and an injected fault on the second save
@@ -389,8 +380,6 @@ Then all characters are byte-identical to the input. (S-13)
   programming error; startup logs a warning if the path is already taken.
 - **Browser reachability** — Zotero's port 23119 is reachable from web pages;
   since writes are ungated this is an accepted, documented risk (see proposal).
-- **EPUB replaced after CFI creation** — old CFIs may be stale; new annotations
-  must be computed against the current file.
 - **BetterBibTeX absent** — citation-key search degrades with an explanatory
   message (SR-4).
 - **PDF outline absent** — n/a; outline reading is out of scope.
@@ -412,7 +401,7 @@ and citation-graph traversal; undo, revert, change journals, approval cards;
 authentication and remote binding; SSE/server push; MinerU and all external
 conversion runtimes; RSS feeds; MCP prompts; ChatGPT connector; runtime write
 gating; BibTeX/CSL-JSON import (identifier, file, and manual only); related-item
-read tooling; batch note writing; figure extraction, page rendering, reader
+read tooling; EPUB annotation creation and CFI generation; batch note writing; figure extraction, page rendering, reader
 capture; PDF outline / table-of-contents reading and PDF section-aware reading;
 recent-items, duplicate _detection_, PDF-coverage audit; standalone
 CLI; Docker; client-config generation; third-party tool registration.

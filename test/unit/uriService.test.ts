@@ -65,13 +65,6 @@ describe("uriService", function () {
     );
   });
 
-  it("percent-encodes an EPUB CFI", function () {
-    const cfi = "epubcfi(/6/14!/4/2/6,/1:23,/1:87)";
-    expect(buildOpenUri("EPUB0001", { cfi })).to.equal(
-      `zotero://open/library/items/EPUB0001?cfi=${encodeURIComponent(cfi)}`,
-    );
-  });
-
   it("gives a regular item only a select URI", function () {
     const uris = buildItemUris({ key: "ABCD1234", isAttachment: false });
     expect(uris.select).to.equal("zotero://select/library/items/ABCD1234");
