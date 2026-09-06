@@ -7,8 +7,7 @@
 import { config } from "../package.json";
 import type { DispatchDeps } from "./protocol/dispatch";
 import { createResourceProvider } from "./resources";
-import { ItemResolver } from "./services/itemResolver";
-import { MutationService } from "./services/mutationService";
+import { createToolContext } from "./services/toolContext";
 import { RealZoteroGateway } from "./services/zoteroGateway";
 import { createToolRegistry } from "./tools";
 import {
@@ -34,11 +33,7 @@ export async function onStartup(): Promise<void> {
   const gateway = new RealZoteroGateway();
   const deps: DispatchDeps = {
     registry: createToolRegistry(),
-    toolContext: {
-      gateway,
-      resolver: new ItemResolver(gateway),
-      mutations: new MutationService(gateway),
-    },
+    toolContext: createToolContext(gateway),
     resources: createResourceProvider(),
     log: (...args) => gateway.log(...args),
   };

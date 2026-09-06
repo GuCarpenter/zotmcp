@@ -2,8 +2,7 @@ import { expect } from "chai";
 import { handleRequest, type DispatchDeps } from "../../src/protocol/dispatch";
 import { LATEST_PROTOCOL_VERSION } from "../../src/protocol/capabilities";
 import { createResourceProvider } from "../../src/resources";
-import { ItemResolver } from "../../src/services/itemResolver";
-import { MutationService } from "../../src/services/mutationService";
+import { createToolContext } from "../../src/services/toolContext";
 import {
   ToolRegistry,
   textResult,
@@ -35,11 +34,7 @@ function makeDeps(overrides: Partial<ToolSpec> = {}): {
     calls,
     deps: {
       registry,
-      toolContext: {
-        gateway,
-        resolver: new ItemResolver(gateway),
-        mutations: new MutationService(gateway),
-      },
+      toolContext: createToolContext(gateway),
       resources: createResourceProvider(),
     },
   };

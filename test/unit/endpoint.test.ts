@@ -1,7 +1,6 @@
 import { expect } from "chai";
 import { createResourceProvider } from "../../src/resources";
-import { ItemResolver } from "../../src/services/itemResolver";
-import { MutationService } from "../../src/services/mutationService";
+import { createToolContext } from "../../src/services/toolContext";
 import { ToolRegistry, textResult } from "../../src/tools/registry";
 import type { DispatchDeps } from "../../src/protocol/dispatch";
 import {
@@ -24,11 +23,7 @@ function makeDeps(gateway: FakeGateway): DispatchDeps {
 
   return {
     registry,
-    toolContext: {
-      gateway,
-      resolver: new ItemResolver(gateway),
-      mutations: new MutationService(gateway),
-    },
+    toolContext: createToolContext(gateway),
     resources: createResourceProvider(),
   };
 }

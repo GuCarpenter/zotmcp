@@ -118,60 +118,63 @@ modules that make the spec's structural guarantees hold.
 
 ## Phase 4 — Search
 
-- [ ] 4.1 `src/services/searchService.ts`: keyword search via
+- [x] 4.1 `src/services/searchService.ts`: keyword search via
       `quicksearch-titleCreatorYear`, ranked, `limit`/`offset`, default 25, hard
       cap 100, always scoped to the user library. Covers: SR-1, LB-3, E-3.
-- [ ] 4.2 `searchService`: pass-through `conditions[]` with `joinMode: all | any`,
+- [x] 4.2 `searchService`: pass-through `conditions[]` with `joinMode: all | any`,
       built on Zotero 10 condition groups (`groupStart`/`groupEnd`) so nested
       logic is expressible; never pass the legacy `required` argument, which now
       throws. Covers: SR-2.
-- [ ] 4.3 `searchService`: compile a boolean tag expression into tag conditions +
+- [x] 4.3 `searchService`: compile a boolean tag expression into tag conditions +
       joinMode. Covers: SR-3.
-- [ ] 4.4 `searchService`: citation-key lookup against the `Extra`
+- [x] 4.4 `searchService`: citation-key lookup against the `Extra`
       `Citation Key:` line; when BetterBibTeX is absent, return an explanatory
       result rather than an opaque failure. Covers: SR-4.
-- [ ] 4.5 `searchService`: full-text search via `fulltextContent` with
+- [x] 4.5 `searchService`: full-text search via `fulltextContent` with
       `resultLevel: 'item'` (Zotero 10's supported way to return owning items;
       the old resolve-to-parents step is obsolete, and `fulltextWord` was
       removed), plus a bounded snippet around each hit. Verify the surviving
       `Zotero.FullText` API for snippets — Zotero 10 moved full text to FTS5 and
       removed several methods. Covers: SR-5.
-- [ ] 4.6 `searchService`: annotation search by text/color/tag using
+- [x] 4.6 `searchService`: annotation search by text/color/tag using
       `resultLevel`, returning the parent item plus page/location. Covers: SR-6.
-- [ ] 4.7 `searchService`: `entity: collections` flat and recursive tree with item
+- [x] 4.7 `searchService`: `entity: collections` flat and recursive tree with item
       counts; `entity: tags` with counts; both paginated. Covers: SR-7, E-3.
-- [ ] 4.8 `searchService`: `filters.deleted` trash listing. Covers: SR-8.
-- [ ] 4.9 `src/tools/librarySearch.ts`: full schema over all modes and entities;
+- [x] 4.8 `searchService`: `filters.deleted` trash listing. Covers: SR-8.
+- [x] 4.9 `src/tools/librarySearch.ts`: full schema over all modes and entities;
       attach URIs to every returned record; explicit empty-result shape.
       Covers: SR-9, U-1.
-- [ ] 4.10 `test/unit/searchService.test.ts`: argument→condition mapping for every
+- [x] 4.10 `test/unit/searchService.test.ts`: argument→condition mapping for every
       mode, limit capping, resolve-to-parents present on child-matching
       conditions. Covers: SR-1..SR-8.
 
 ## Phase 5 — Reading
 
-- [ ] 5.1 `src/services/pdfService.ts`: `getText()` chain —
+- [x] 5.1 `src/services/documentTextService.ts`: `getText()` chain —
       `Zotero.PDFWorker.getFullText(id)` → `{text, pageChars}`, then Zotero's
       full-text cache, then `NoTextLayerError` naming a scanned PDF as the likely
       cause. Covers: R-2, R-6.
-- [ ] 5.2 `pdfService`: page-range slicing on cumulative `pageChars`, with
+- [x] 5.2 `pdfService`: page-range slicing on cumulative `pageChars`, with
       form-feed splitting as fallback and an explicit "page boundaries
       approximate" flag when used. Covers: R-3.
-- [ ] 5.3 `src/services/epubService.ts`: `IOUtils.read` → `fflate` unzip →
-      `container.xml` → `.opf` → spine order → XHTML→text. Covers: R-2.
-- [ ] 5.4 `epubService`: `sections` grouped by spine document. Covers: R-5.
-- [ ] 5.5 `src/services/readService.ts`: sectioned item read — `metadata`,
+- [x] 5.3 ~~`epubService` zip/spine parsing~~ — not needed. Zotero 10's SDT
+      packs cover EPUB through the same reader as PDF, so `documentTextService`
+      serves both and `fflate` is unused. Covers: R-2.
+- [x] 5.4 EPUB `sections` come from the pack outline (its navigation document),
+      with heading blocks as fallback. Covers: R-5.
+- [x] 5.5 `src/services/readService.ts`: sectioned item read — `metadata`,
       `abstract`, `children`, `attachments` (content type, on-disk path, URIs),
       `tags`, `notes`, `annotations`; any subset selectable. Covers: R-1, U-2.
-- [ ] 5.6 `src/tools/libraryRead.ts`: section selection schema + URIs.
+- [x] 5.6 `src/tools/libraryRead.ts`: section selection schema + URIs.
       Covers: R-1.
-- [ ] 5.7 `src/tools/paperRead.ts`: modes `fulltext`, `pages`, `sections`;
+- [x] 5.7 `src/tools/paperRead.ts`: modes `fulltext`, `pages`, `sections`;
       `sections` on a PDF errors and points at `pages`/`fulltext`; output caps
       with in-band truncation reporting. Covers: R-2, R-3, R-5, R-7.
-- [ ] 5.8 `test/unit/pdfService.test.ts`: `pageChars` slicing math, form-feed
+- [x] 5.8 `test/unit/pdfService.test.ts`: `pageChars` slicing math, form-feed
       fallback, fallback-chain ordering with a fake gateway. Covers: R-2, R-3.
-- [ ] 5.9 `test/unit/epubService.test.ts`: spine ordering and text extraction
-      against a small fixture EPUB. Covers: R-2, R-5.
+- [x] 5.9 `test/unit/documentTextService.test.ts` + `test/unit/readTools.test.ts`
+      cover EPUB reading through the SDT path, including outline-derived
+      sections. Covers: R-2, R-5.
 
 ## Phase 6 — Annotations and notes
 

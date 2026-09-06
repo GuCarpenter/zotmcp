@@ -45,6 +45,9 @@ export interface ZoteroGateway {
    * a full-text hit. Null when nothing is cached.
    */
   fulltextCachePath(item: Zotero.Item): string | null;
+
+  /** Absolute path of an attachment's file, or null when missing/unlinked. */
+  getAttachmentPath(item: Zotero.Item): Promise<string | null>;
   readTextFile(path: string, maxLength?: number): Promise<string>;
 
   /**
@@ -226,6 +229,16 @@ export class RealZoteroGateway implements ZoteroGateway {
       ).FullText?.getItemCacheFile(item);
       return file?.path ?? null;
     } catch {
+      return null;
+    }
+  }
+
+  public async getAttachmentPath(item: Zotero.Item): Promise<string | null> {
+    try {
+      const path = await item.getFilePathAsync();
+      return path === false ? null : path;
+    } catch {
+      // A linked file whose target moved is a normal state, not a failure.
       return null;
     }
   }

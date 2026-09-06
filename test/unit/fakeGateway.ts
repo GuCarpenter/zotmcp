@@ -25,6 +25,9 @@ export interface FakeItem {
   libraryID: number;
   itemType: string;
   attachmentContentType?: string | null;
+  attachmentIDs?: number[];
+  noteIDs?: number[];
+  json?: Record<string, unknown>;
 }
 
 export interface FakeCollection {
@@ -62,6 +65,7 @@ export class FakeGateway implements ZoteroGateway {
   public rejectConditions = new Set<string>();
   public fullTextSearchable = true;
   public cachePath: string | null = "/tmp/zotero-ft-cache";
+  public attachmentPath: string | null = "/tmp/paper.pdf";
   public cacheText = "";
   public sdtReader: SdtReader | null = null;
   public pdfText: { text?: string; pageChars?: number[] } | null = null;
@@ -80,6 +84,9 @@ export class FakeGateway implements ZoteroGateway {
       libraryID: item.libraryID ?? USER_LIBRARY_ID,
       itemType: item.itemType ?? "journalArticle",
       attachmentContentType: item.attachmentContentType ?? null,
+      attachmentIDs: item.attachmentIDs ?? [],
+      noteIDs: item.noteIDs ?? [],
+      json: item.json ?? {},
       key: item.key,
     };
     this.items.push(created);
@@ -157,6 +164,10 @@ export class FakeGateway implements ZoteroGateway {
 
   public fulltextCachePath(_item: Zotero.Item): string | null {
     return this.cachePath;
+  }
+
+  public async getAttachmentPath(_item: Zotero.Item): Promise<string | null> {
+    return this.attachmentPath;
   }
 
   public async readTextFile(_path: string): Promise<string> {
@@ -250,7 +261,16 @@ function toZoteroItem(item: FakeItem) {
   return {
     ...item,
     isAttachment: () => item.itemType === "attachment",
+    isAnnotation: () => item.itemType === "annotation",
     isRegularItem: () =>
       item.itemType !== "attachment" && item.itemType !== "note",
+    getField: () => "",
+    getCreators: () => [],
+    getTags: () => [],
+    getAttachments: () => item.attachmentIDs ?? [],
+    getNotes: () => item.noteIDs ?? [],
+    getAnnotations: () => [],
+    getNote: () => "",
+    toJSON: () => item.json ?? {},
   };
 }

@@ -8,6 +8,7 @@
  */
 
 import { ZotmcpError } from "../errors";
+import { libraryRead, librarySearch, paperRead } from "./readHandlers";
 import { ToolRegistry, type ToolSpec } from "./registry";
 
 /** Canonical surface. The drift test compares the registry against this. */
@@ -84,7 +85,7 @@ const specs: ToolSpec[] = [
       },
       offset: { type: "number", description: "Results to skip." },
     }),
-    handler: pending("library_search", "Phase 4"),
+    handler: librarySearch,
   },
   {
     name: "library_read",
@@ -115,7 +116,7 @@ const specs: ToolSpec[] = [
       },
       ["itemKey"],
     ),
-    handler: pending("library_read", "Phase 5"),
+    handler: libraryRead,
   },
   {
     name: "paper_read",
@@ -136,11 +137,17 @@ const specs: ToolSpec[] = [
           type: "string",
           description: "1-based page range for mode 'pages', e.g. '3-5'.",
         },
+        includeText: {
+          type: "boolean",
+          description:
+            "For mode 'sections': set false to get titles, levels and start " +
+            "pages only, i.e. a table of contents. Default true.",
+        },
         maxChars: { type: "number", description: "Output character cap." },
       },
       ["attachmentKey"],
     ),
-    handler: pending("paper_read", "Phase 5"),
+    handler: paperRead,
   },
   {
     name: "library_import",

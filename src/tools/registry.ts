@@ -4,8 +4,11 @@
  * (spec S-9).
  */
 
+import type { DocumentTextService } from "../services/documentTextService";
 import type { ItemResolver } from "../services/itemResolver";
 import type { MutationService } from "../services/mutationService";
+import type { ReadService } from "../services/readService";
+import type { SearchService } from "../services/searchService";
 import type { ZoteroGateway } from "../services/zoteroGateway";
 
 export type ToolMutability = "read" | "write";
@@ -14,6 +17,9 @@ export interface ToolContext {
   gateway: ZoteroGateway;
   resolver: ItemResolver;
   mutations: MutationService;
+  search: SearchService;
+  documents: DocumentTextService;
+  read: ReadService;
 }
 
 export interface ToolTextContent {
