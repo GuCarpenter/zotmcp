@@ -2,12 +2,10 @@
  * The complete MCP tool surface: eleven modal tools.
  *
  * Modal rather than many narrow tools, so the whole surface stays cheap to send
- * on every request. Handlers land phase by phase; a not-yet-implemented handler
- * fails loudly and names its phase rather than returning a plausible empty
- * result.
+ * on every request. Each spec here carries the model-facing description and
+ * schema; the behaviour lives in the handler modules.
  */
 
-import { ZotmcpError } from "../errors";
 import {
   annotationWrite,
   libraryRead,
@@ -21,6 +19,7 @@ import {
   libraryDelete,
   libraryImport,
   libraryUpdate,
+  zoteroScript,
 } from "./writeHandlers";
 import { ToolRegistry, type ToolSpec } from "./registry";
 
@@ -40,15 +39,6 @@ export const TOOL_NAMES = [
 ] as const;
 
 export type ToolName = (typeof TOOL_NAMES)[number];
-
-function pending(name: ToolName, phase: string): ToolSpec["handler"] {
-  return async () => {
-    throw new ZotmcpError(
-      "internal",
-      `Tool "${name}" is not implemented yet (planned in ${phase}).`,
-    );
-  };
-}
 
 const OBJECT_SCHEMA = (
   properties: Record<string, unknown>,
@@ -373,7 +363,7 @@ const specs: ToolSpec[] = [
       },
       ["mode", "script"],
     ),
-    handler: pending("zotero_script", "Phase 8"),
+    handler: zoteroScript,
   },
 ];
 

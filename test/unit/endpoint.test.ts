@@ -24,7 +24,7 @@ function makeDeps(gateway: FakeGateway): DispatchDeps {
   return {
     registry,
     toolContext: createToolContext(gateway),
-    resources: createResourceProvider(),
+    resources: createResourceProvider(createToolContext(gateway)),
   };
 }
 

@@ -15,6 +15,7 @@ import { ItemResolver } from "./itemResolver";
 import { MutationService } from "./mutationService";
 import { NoteService } from "./noteService";
 import { ReadService } from "./readService";
+import { ScriptService } from "./scriptService";
 import { SearchService } from "./searchService";
 import { WriteService } from "./writeService";
 import type { ZoteroGateway } from "./zoteroGateway";
@@ -37,5 +38,6 @@ export function createToolContext(gateway: ZoteroGateway): ToolContext {
     imports: new ImportService(gateway, resolver, mutations),
     deletes: new DeleteService(gateway, resolver, mutations),
     attachments: new AttachmentService(gateway, resolver, mutations),
+    scripts: new ScriptService(gateway, mutations),
   };
 }

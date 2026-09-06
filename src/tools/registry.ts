@@ -17,6 +17,7 @@ import type {
 import type { NoteService } from "../services/noteService";
 import type { ReadService } from "../services/readService";
 import type { SearchService } from "../services/searchService";
+import type { ScriptService } from "../services/scriptService";
 import type { WriteService } from "../services/writeService";
 import type { ZoteroGateway } from "../services/zoteroGateway";
 
@@ -36,6 +37,7 @@ export interface ToolContext {
   imports: ImportService;
   deletes: DeleteService;
   attachments: AttachmentService;
+  scripts: ScriptService;
 }
 
 export interface ToolTextContent {

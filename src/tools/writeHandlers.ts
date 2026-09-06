@@ -231,3 +231,17 @@ export async function attachmentUpdate(
       );
   }
 }
+
+export async function zoteroScript(
+  args: Args,
+  ctx: ToolContext,
+): Promise<ToolResult> {
+  return jsonResult(
+    await ctx.scripts.run({
+      mode: args.mode,
+      script: args.script,
+      description: str(args, "description"),
+      timeoutMs: args.timeoutMs,
+    }),
+  );
+}

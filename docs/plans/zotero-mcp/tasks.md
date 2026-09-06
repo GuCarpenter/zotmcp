@@ -260,18 +260,18 @@ merge` (merge into a designated master). Covers: W-12.
 
 ## Phase 8 — Script tool and resources
 
-- [ ] 8.1 `src/tools/zoteroScript.ts`: `new Function("Zotero", "env", body)` with
+- [x] 8.1 `src/tools/zoteroScript.ts`: `new Function("Zotero", "env", body)` with
       a minimal `env` (log, libraryID, shouldStop, remainingMs); `mode: write`
       routes through the write queue, `mode: read` runs directly; no approval
       gate. Covers: X-1.
-- [ ] 8.2 `zoteroScript`: `Promise.race` timeout (default 30 s, max 120 s) →
+- [x] 8.2 `zoteroScript`: `Promise.race` timeout (default 30 s, max 120 s) →
       `TimeoutError`; exceptions returned as tool errors with message and stack;
       description echoed verbatim; non-serializable return values coerced or
       reported, never silently dropped. Covers: X-2, X-3, X-4.
-- [ ] 8.3 `src/resources/index.ts`: `zotero://collections`,
+- [x] 8.3 `src/resources/index.ts`: `zotero://collections`,
       `zotero://items/{itemKey}`, `zotero://collections/{collectionKey}/items`
       for `resources/list` and `resources/read`. Covers: S-10.
-- [ ] 8.4 `test/unit/zoteroScript.test.ts`: timeout, thrown-exception mapping,
+- [x] 8.4 `test/unit/zoteroScript.test.ts`: timeout, thrown-exception mapping,
       description echo. Covers: X-2..X-4.
 
 ## Phase 9 — Preferences UI

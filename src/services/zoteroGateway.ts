@@ -62,6 +62,13 @@ export interface ZoteroGateway {
     saveOptions?: Record<string, unknown>,
   ): Promise<Zotero.Item>;
 
+  /**
+   * Runs caller-supplied JavaScript with the privileged `Zotero` global and an
+   * `env` helper bag. Privileged by nature, so it lives on the gateway with the
+   * rest of the Zotero surface rather than leaking the global elsewhere.
+   */
+  runScript(source: string, env: Record<string, unknown>): Promise<unknown>;
+
   /** Resolves identifiers (DOI, ISBN, arXiv, PMID) into new items. */
   importByIdentifier(
     identifier: string,
@@ -353,6 +360,20 @@ export class RealZoteroGateway implements ZoteroGateway {
         };
       }
     ).Annotations.saveFromJSON(attachment, json, saveOptions);
+  }
+
+  public async runScript(
+    source: string,
+    env: Record<string, unknown>,
+  ): Promise<unknown> {
+    // An async function body, so a script may await without wrapping itself.
+    const AsyncFunction = Object.getPrototypeOf(async function () {})
+      .constructor as new (
+      ...args: string[]
+    ) => (zotero: unknown, env: Record<string, unknown>) => Promise<unknown>;
+
+    const fn = new AsyncFunction("Zotero", "env", source);
+    return fn(Zotero, env);
   }
 
   public async importByIdentifier(

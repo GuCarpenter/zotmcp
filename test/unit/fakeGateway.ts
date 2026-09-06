@@ -91,6 +91,11 @@ export class FakeGateway implements ZoteroGateway {
     collectionIDs: number[];
   }[] = [];
   public identifierFailures = new Map<string, string>();
+  public scriptRuns: { source: string; env: Record<string, unknown> }[] = [];
+  /** Stands in for the script body, since no JS is evaluated in tests. */
+  public scriptImplementation:
+    ((env: Record<string, unknown>) => Promise<unknown> | unknown) | null =
+    null;
   public importedFiles: Record<string, unknown>[] = [];
   public createdItems: Record<string, unknown>[] = [];
   public fieldsByItemType = new Map<string, string[]>();
@@ -238,6 +243,15 @@ export class FakeGateway implements ZoteroGateway {
       itemType: "annotation",
       libraryID: USER_LIBRARY_ID,
     } as unknown as Zotero.Item;
+  }
+
+  public async runScript(
+    source: string,
+    env: Record<string, unknown>,
+  ): Promise<unknown> {
+    this.scriptRuns.push({ source, env });
+    if (this.scriptImplementation) return this.scriptImplementation(env);
+    return undefined;
   }
 
   public async importByIdentifier(

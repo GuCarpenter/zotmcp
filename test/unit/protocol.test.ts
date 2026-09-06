@@ -35,7 +35,7 @@ function makeDeps(overrides: Partial<ToolSpec> = {}): {
     deps: {
       registry,
       toolContext: createToolContext(gateway),
-      resources: createResourceProvider(),
+      resources: createResourceProvider(createToolContext(gateway)),
     },
   };
 }

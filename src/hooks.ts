@@ -31,10 +31,11 @@ export async function onStartup(): Promise<void> {
   ]);
 
   const gateway = new RealZoteroGateway();
+  const toolContext = createToolContext(gateway);
   const deps: DispatchDeps = {
     registry: createToolRegistry(),
-    toolContext: createToolContext(gateway),
-    resources: createResourceProvider(),
+    toolContext,
+    resources: createResourceProvider(toolContext),
     log: (...args) => gateway.log(...args),
   };
 
