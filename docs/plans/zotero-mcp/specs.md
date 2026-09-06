@@ -62,6 +62,11 @@ supplied by Zotero's own undo stack.
   `127.0.0.1` or `[::1]` is refused. This is the primary mitigation for ungated
   writes, so re-enabling web content requires a scope decision, not a code
   change. Client-facing docs must state the header requirements.
+- **S-14b** Requests Zotero rejects before dispatch — malformed JSON, a
+  non-`POST` method, a non-`application/json` content type, a non-loopback
+  `Host` — are answered by Zotero as HTTP 400 with a plain-text body, not a
+  JSON-RPC error object. This is Zotero's behaviour, not something the plugin
+  overrides; client docs must not promise a JSON-RPC error for a malformed body.
 - **S-15** The manifest declares `strict_max_version` covering the Zotero
   versions the plugin is tested against; Zotero enforces it in release builds, so
   an un-bumped maximum silently disables the plugin after a Zotero upgrade.

@@ -145,6 +145,44 @@ setters reject a stored-file path containing a slash. Both land on Phase 7
 **Plugin FTL registration was reworked** with per-locale fallback, which affects
 Phase 9's preferences pane.
 
+### Verified — live endpoint behaviour (task 3.13, Zotero 10)
+
+Measured against a running Zotero 10 with the XPI installed, at
+`http://127.0.0.1:23119/zotmcp/mcp`:
+
+| Request                                   | Result                                                                               |
+| ----------------------------------------- | ------------------------------------------------------------------------------------ |
+| `initialize`                              | 200, protocol `2025-06-18`, capabilities `tools`+`resources`                         |
+| `initialize` asking `2024-11-05`          | 200, echoes `2024-11-05`                                                             |
+| `initialize` asking `1999-01-01`          | 200, falls back to `2025-06-18`                                                      |
+| `tools/list`                              | 200, exactly 11 tools with correct `readOnlyHint`; only `library_delete` destructive |
+| `resources/list`                          | 200, the three `zotero://` resources                                                 |
+| `tools/call` on an unimplemented tool     | 200 with `isError: true` naming the phase — a tool failure, not a protocol error     |
+| `tools/call` with an unknown tool         | `-32601`                                                                             |
+| unknown method                            | `-32601`                                                                             |
+| notification                              | 202, empty body                                                                      |
+| JSON-RPC batch array                      | `-32600`                                                                             |
+| `tools/call` with a CJK + emoji tool name | echoed back byte-identical                                                           |
+| two parallel calls, no prior `initialize` | both answered independently                                                          |
+
+Zotero's own layer answers before dispatch in four cases, all HTTP 400 with a
+plain-text body rather than JSON-RPC:
+
+- **malformed JSON** → `Invalid JSON provided`. Our `-32700` branch is therefore
+  unreachable over `application/json`; it remains as defence for a raw string
+  body. Clients should not expect a JSON-RPC error for a broken body.
+- `GET` → `Endpoint does not support method` (which is why not asserting 405 was
+  the right call).
+- wrong content type → `Endpoint does not support content-type`.
+- non-loopback `Host` → `Bad request`.
+
+Zotero 10's hardening behaves exactly as documented, which confirms S-14
+empirically: a request carrying an `Origin` header, or a `User-Agent` starting
+with `Mozilla/`, gets the connection closed with **no response at all** (curl
+reports "Empty reply from server"), and adding `Zotero-Allowed-Request: 1` makes
+the same request succeed. A plain non-browser client such as curl needs no extra
+header.
+
 ### Unverified — design assumptions
 
 - **EPUB.** No prior art in-plugin. Design assumes reading the file and parsing

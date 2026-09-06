@@ -112,7 +112,7 @@ modules that make the spec's structural guarantees hold.
 - [x] 3.12 `test/unit/toolVocabulary.test.ts`: no tool name, description, or
       schema contains semantic / embedding / vector / undo / approval /
       confirmation / group library / OpenAlex. Covers: S-12.
-- [ ] 3.13 Manual checkpoint: connect a real MCP client to
+- [x] 3.13 Manual checkpoint: connect a real MCP client to
       `http://127.0.0.1:23119/zotmcp/mcp`, complete `initialize`, and see
       `tools/list`.
 
