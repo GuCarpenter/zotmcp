@@ -257,6 +257,37 @@ describe("read tools", function () {
       expect(payload.sections[0].text).to.equal(undefined);
     });
 
+    it("passes a section selector and per-section cap through", async function () {
+      gateway.sdtReader = reader(
+        [
+          { type: "heading", content: [{ text: "Intro" }] },
+          { type: "paragraph", content: [{ text: "a".repeat(80) }] },
+          { type: "heading", content: [{ text: "Method" }] },
+          { type: "paragraph", content: [{ text: "b".repeat(80) }] },
+        ],
+        {
+          outline: [
+            { title: "Intro", ref: [0] },
+            { title: "Method", ref: [2] },
+          ],
+        },
+      );
+
+      const payload = parse(
+        await call("paper_read", {
+          attachmentKey: "EFGH5678",
+          mode: "sections",
+          select: ["method"],
+          perSectionMaxChars: 20,
+        }),
+      );
+
+      expect(payload.sections).to.have.length(1);
+      expect(payload.sections[0].title).to.equal("Method");
+      expect(payload.sections[0].text).to.have.length(20);
+      expect(payload.totalSections).to.equal(2);
+    });
+
     it("rejects an unknown mode", async function () {
       let error: any;
       try {

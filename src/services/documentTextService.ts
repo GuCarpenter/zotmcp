@@ -66,13 +66,46 @@ export interface SectionResult {
   startPage?: number;
   text?: string;
   charCount: number;
+  /** Set when this section's own text was cut by a cap. */
+  truncated?: boolean;
 }
 
 export interface SectionsResult {
   sections: SectionResult[];
   source: "sdt-outline" | "sdt-headings";
   truncated: boolean;
+  /** Sections the document has, before any selector was applied. */
+  totalSections: number;
+  /** Selectors that matched no section, so a typo is visible. */
+  unmatchedSelectors?: string[];
   note?: string;
+}
+
+export interface SectionsOptions {
+  includeText?: boolean;
+  /** Total character budget across all returned sections. */
+  maxChars?: number;
+  /**
+   * Read only these sections. A selector matches when the section title starts
+   * with it or contains it, case-insensitively — so `"3.1"` selects
+   * `3.1 Algorithm` together with `3.1.1` and `3.1.2`, and `"background"`
+   * selects `2 Background`. Without a selector every section is returned.
+   */
+  select?: string[];
+  /** Per-section character cap, so one long section cannot eat the budget. */
+  perSectionMaxChars?: number;
+}
+
+/** Normalizes a title or selector for comparison. */
+function normalizeForMatch(value: string): string {
+  return value.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+export function matchesSelector(title: string, selector: string): boolean {
+  const haystack = normalizeForMatch(title);
+  const needle = normalizeForMatch(selector);
+  if (!needle) return false;
+  return haystack.startsWith(needle) || haystack.includes(needle);
 }
 
 /** Recursively concatenates a block's text leaves, as Zotero's own reader does. */
@@ -310,7 +343,7 @@ export class DocumentTextService {
    */
   public async sections(
     attachment: Zotero.Item,
-    options: { includeText?: boolean; maxChars?: number } = {},
+    options: SectionsOptions = {},
   ): Promise<SectionsResult> {
     this.assertReadable(attachment);
 
@@ -337,6 +370,7 @@ export class DocumentTextService {
         includeText,
         maxChars,
         "sdt-outline",
+        options,
       );
     }
 
@@ -356,6 +390,7 @@ export class DocumentTextService {
         sections: [],
         source: "sdt-headings",
         truncated: false,
+        totalSections: 0,
         note:
           "This document has no outline and no detected headings, so it has no " +
           "sections. Read it with mode 'fulltext' or 'pages'.",
@@ -369,6 +404,7 @@ export class DocumentTextService {
       includeText,
       maxChars,
       "sdt-headings",
+      options,
     );
   }
 
@@ -384,21 +420,44 @@ export class DocumentTextService {
     includeText: boolean,
     maxChars: number,
     source: "sdt-outline" | "sdt-headings",
+    options: SectionsOptions,
   ): Promise<SectionsResult> {
+    const totalSections = entries.length;
+    const selectors = (options.select ?? []).filter(
+      (selector) => typeof selector === "string" && selector.trim(),
+    );
+    const perSectionMaxChars = options.perSectionMaxChars;
+
+    // Section boundaries must be computed from the full list: a selected
+    // section still ends where the *next* section begins, selected or not.
+    const spans = entries.map((entry, i) => ({
+      entry,
+      start: entry.blockIndex,
+      end:
+        i + 1 < entries.length
+          ? Math.max(entry.blockIndex, entries[i + 1].blockIndex - 1)
+          : totalBlocks - 1,
+    }));
+
+    const unmatched = selectors.filter(
+      (selector) =>
+        !spans.some(({ entry }) => matchesSelector(entry.title, selector)),
+    );
+
+    const wanted = selectors.length
+      ? spans.filter(({ entry }) =>
+          selectors.some((selector) => matchesSelector(entry.title, selector)),
+        )
+      : spans;
+
     const sections: SectionResult[] = [];
     let used = 0;
     let truncated = false;
 
-    for (let i = 0; i < entries.length; i++) {
-      const entry = entries[i];
-      const start = entry.blockIndex;
-      const end =
-        i + 1 < entries.length
-          ? Math.max(start, entries[i + 1].blockIndex - 1)
-          : totalBlocks - 1;
-
+    for (const { entry, start, end } of wanted) {
       let text: string | undefined;
       let charCount = 0;
+      let sectionTruncated = false;
       let pageIndex = entry.pageIndex;
 
       if (includeText && start <= end && used < maxChars) {
@@ -409,15 +468,24 @@ export class DocumentTextService {
         // The heading itself opens the section, so its text is not repeated.
         const body = blocksToText(blocks.slice(1));
         charCount = body.length;
-        if (used + body.length > maxChars) {
-          text = body.slice(0, Math.max(0, maxChars - used));
+
+        const budget = Math.min(
+          maxChars - used,
+          perSectionMaxChars ?? Number.POSITIVE_INFINITY,
+        );
+        if (body.length > budget) {
+          text = body.slice(0, Math.max(0, budget));
+          sectionTruncated = true;
           truncated = true;
         } else {
           text = body;
         }
         used += text.length;
       } else {
-        if (includeText) truncated = truncated || start <= end;
+        if (includeText && start <= end) {
+          sectionTruncated = true;
+          truncated = true;
+        }
         // Outline entries do not always carry a page, but the block they point
         // at does, and a section without a page number is far less useful.
         if (pageIndex === undefined && start <= end) {
@@ -432,10 +500,24 @@ export class DocumentTextService {
         ...(typeof pageIndex === "number" ? { startPage: pageIndex + 1 } : {}),
         ...(text === undefined ? {} : { text }),
         charCount,
+        ...(sectionTruncated ? { truncated: true } : {}),
       });
     }
 
-    return { sections, source, truncated };
+    return {
+      sections,
+      source,
+      truncated,
+      totalSections,
+      ...(unmatched.length ? { unmatchedSelectors: unmatched } : {}),
+      ...(selectors.length && !sections.length
+        ? {
+            note:
+              "No section matched the selector. Call the same mode with " +
+              "includeText false to list the document's sections.",
+          }
+        : {}),
+    };
   }
 
   private async fallbackText(

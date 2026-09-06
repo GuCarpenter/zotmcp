@@ -172,6 +172,11 @@ modules that make the spec's structural guarantees hold.
       with in-band truncation reporting. Covers: R-2, R-3, R-5, R-7.
 - [x] 5.8 `test/unit/pdfService.test.ts`: `pageChars` slicing math, form-feed
       fallback, fallback-chain ordering with a fake gateway. Covers: R-2, R-3.
+- [x] 5.10 `documentTextService.sections`: `select` selector and
+      `perSectionMaxChars`, plus `totalSections` and `unmatchedSelectors` in the
+      result; wired through `paper_read`. Added after live testing showed a total
+      budget spent front-to-back starves later sections.
+      Covers: R-5a, R-5b, R-5c.
 - [x] 5.9 `test/unit/documentTextService.test.ts` + `test/unit/readTools.test.ts`
       cover EPUB reading through the SDT path, including outline-derived
       sections. Covers: R-2, R-5.

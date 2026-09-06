@@ -122,8 +122,10 @@ const specs: ToolSpec[] = [
     name: "paper_read",
     description:
       "Read the text of a PDF or EPUB attachment. Modes: 'fulltext' for the " +
-      "whole document, 'pages' for a 1-based page range (PDF), 'sections' for " +
-      "per-spine-document text (EPUB). Output is capped and reports truncation.",
+      "whole document, 'pages' for a 1-based page range, 'sections' for text by " +
+      "document section with titles, levels and start pages. Sections can be " +
+      "selected by title so a late section costs nothing for the earlier ones. " +
+      "Output is capped and reports truncation.",
     mutability: "read",
     inputSchema: OBJECT_SCHEMA(
       {
@@ -142,6 +144,22 @@ const specs: ToolSpec[] = [
           description:
             "For mode 'sections': set false to get titles, levels and start " +
             "pages only, i.e. a table of contents. Default true.",
+        },
+        select: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "For mode 'sections': read only the sections whose titles start " +
+            "with or contain one of these, e.g. ['3.1'] or ['background']. " +
+            "A number selector also brings in its subsections, so '3.1' " +
+            "includes 3.1.1. Without it every section is returned, and the " +
+            "character budget is spent from the start of the document.",
+        },
+        perSectionMaxChars: {
+          type: "number",
+          description:
+            "For mode 'sections': cap each section's text separately, so one " +
+            "long section cannot exhaust the whole budget.",
         },
         maxChars: { type: "number", description: "Output character cap." },
       },

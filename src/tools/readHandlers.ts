@@ -178,6 +178,11 @@ export async function paperRead(
       const result = await ctx.documents.sections(attachment, {
         includeText: args.includeText !== false,
         maxChars,
+        select: strArray(args, "select"),
+        perSectionMaxChars:
+          args.perSectionMaxChars === undefined
+            ? undefined
+            : ctx.documents.normalizeMaxChars(args.perSectionMaxChars),
       });
       return jsonResult({ attachmentKey: attachment.key, mode, ...result });
     }

@@ -145,6 +145,16 @@ supplied by Zotero's own undo stack.
 - **R-5** `mode: sections` groups EPUB text by spine document. PDFs do not
   support `sections`; requesting it for a PDF returns an error directing the
   caller to `pages` or `fulltext`.
+- **R-5a** `mode: sections` accepts a `select` array; only sections whose titles
+  start with or contain a selector are returned, so reading a late section costs
+  nothing for the sections before it. A numeric selector also matches its
+  subsections (`"3.1"` matches `3.1.1`). A selector that matches nothing is
+  reported back.
+- **R-5b** A selected section still ends where the next section begins, whether
+  or not that next section was selected.
+- **R-5c** `mode: sections` accepts `perSectionMaxChars`, capping each section's
+  text independently so one long section cannot exhaust the total budget. Each
+  section reports its own truncation and its full character count.
 - **R-6** A PDF with no text layer returns an actionable error naming the cause
   (scanned document, no text layer) rather than empty output.
 - **R-7** All read output is bounded by an explicit character/page cap, reported

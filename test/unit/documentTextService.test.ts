@@ -454,6 +454,112 @@ describe("documentTextService", function () {
       expect(result.note).to.include("no outline and no detected headings");
     });
 
+    it("selects only matching sections, so earlier ones cost nothing", async function () {
+      gateway.sdtReader = fakeReader(blocks, {
+        pages: [{}, {}],
+        outline: [
+          { title: "Introduction", ref: [0] },
+          { title: "Method", ref: [2] },
+        ],
+      });
+
+      const result = await service.sections(attachment(gateway), {
+        select: ["method"],
+      });
+
+      expect(result.sections.map((s) => s.title)).to.deep.equal(["Method"]);
+      expect(result.sections[0].text).to.equal("method body");
+      // The document still reports how many sections it has.
+      expect(result.totalSections).to.equal(2);
+    });
+
+    it("matches a numeric selector including its subsections", async function () {
+      gateway.sdtReader = fakeReader(
+        [
+          heading("3.1 Algorithm", 0),
+          paragraph("algo", 0),
+          heading("3.1.1 Forward pass", 0),
+          paragraph("forward", 0),
+          heading("3.2 Other", 1),
+          paragraph("other", 1),
+        ],
+        {
+          pages: [{}, {}],
+          outline: [
+            { title: "3.1 Algorithm", ref: [0] },
+            { title: "3.1.1 Forward pass", ref: [2] },
+            { title: "3.2 Other", ref: [4] },
+          ],
+        },
+      );
+
+      const result = await service.sections(attachment(gateway), {
+        select: ["3.1"],
+      });
+
+      expect(result.sections.map((s) => s.title)).to.deep.equal([
+        "3.1 Algorithm",
+        "3.1.1 Forward pass",
+      ]);
+    });
+
+    it("ends a selected section where the next one begins, selected or not", async function () {
+      gateway.sdtReader = fakeReader(blocks, {
+        outline: [
+          { title: "Introduction", ref: [0] },
+          { title: "Method", ref: [2] },
+        ],
+      });
+
+      const result = await service.sections(attachment(gateway), {
+        select: ["introduction"],
+      });
+
+      // Without the full span list, Introduction would swallow Method's text.
+      expect(result.sections[0].text).to.equal("intro body");
+    });
+
+    it("reports a selector that matched nothing", async function () {
+      gateway.sdtReader = fakeReader(blocks, {
+        outline: [{ title: "Introduction", ref: [0] }],
+      });
+
+      const result = await service.sections(attachment(gateway), {
+        select: ["conclusion"],
+      });
+
+      expect(result.unmatchedSelectors).to.deep.equal(["conclusion"]);
+      expect(result.sections).to.deep.equal([]);
+      expect(result.note).to.include("includeText false");
+    });
+
+    it("caps each section separately with perSectionMaxChars", async function () {
+      gateway.sdtReader = fakeReader(
+        [
+          heading("A"),
+          paragraph("x".repeat(300)),
+          heading("B"),
+          paragraph("y".repeat(300)),
+        ],
+        {
+          outline: [
+            { title: "A", ref: [0] },
+            { title: "B", ref: [2] },
+          ],
+        },
+      );
+
+      const result = await service.sections(attachment(gateway), {
+        perSectionMaxChars: 50,
+      });
+
+      // A long first section no longer starves the ones after it.
+      expect((result.sections[0].text ?? "").length).to.equal(50);
+      expect((result.sections[1].text ?? "").length).to.equal(50);
+      expect(result.sections[0].truncated).to.equal(true);
+      expect(result.sections[0].charCount).to.equal(300);
+    });
+
     it("stops adding text at the character cap", async function () {
       gateway.sdtReader = fakeReader(
         [
