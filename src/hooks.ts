@@ -18,8 +18,17 @@ import {
 
 const SERVER_ENABLED_PREF = "mcp.server.enabled";
 
-/** Supplies the Undo/Redo menu labels for writes made through MCP. */
-const UNDO_LABEL_FTL = [`${config.addonRef}.ftl`];
+/**
+ * The plugin's Fluent file, which supplies the Undo/Redo menu labels.
+ *
+ * The build prefixes locale filenames with the plugin namespace so plugins cannot
+ * collide in Zotero's shared localization registry, so `strings.ftl` ships as
+ * `zotmcp-strings.ftl` and must be registered under that name. Registering the
+ * unprefixed name silently resolves nothing, and every undo entry then shows a
+ * raw message ID.
+ */
+export const LOCALE_FILE_NAME = `${config.addonRef}-strings.ftl`;
+const UNDO_LABEL_FTL = [LOCALE_FILE_NAME];
 
 let prefObserverId: symbol | string | undefined;
 
