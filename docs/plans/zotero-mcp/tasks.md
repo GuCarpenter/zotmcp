@@ -38,30 +38,30 @@ phase can be verified end to end against a real MCP client.
 These come before the server because every tool depends on them, and they are the
 modules that make the spec's structural guarantees hold.
 
-- [ ] 2.1 `src/services/zoteroGateway.ts`: the **only** module referencing global
+- [x] 2.1 `src/services/zoteroGateway.ts`: the **only** module referencing global
       `Zotero`. Wrap item/collection/search/DB/PDFWorker/Fulltext access behind an
       interface so tests can substitute a fake.
-- [ ] 2.2 `src/errors.ts`: typed errors — `NotFoundError`,
+- [x] 2.2 `src/errors.ts`: typed errors — `NotFoundError`,
       `GroupLibraryUnsupportedError`, `NoTextLayerError`, `InvalidArgumentError`,
       `FileMissingError`, `TimeoutError` — each carrying an actionable message
       naming the offending value. Covers: E-1.
-- [ ] 2.3 `src/services/itemResolver.ts`: `resolveItem` / `resolveAttachment` /
+- [x] 2.3 `src/services/itemResolver.ts`: `resolveItem` / `resolveAttachment` /
       `resolveCollection`, each looking up in `Zotero.Libraries.userLibraryID` and
       asserting `libraryID === userLibraryID` so a group key can never fall
       through to a same-keyed My Library object. Covers: LB-1, LB-2.
-- [ ] 2.4 `src/services/uriService.ts`: `buildItemUris(item)` and
+- [x] 2.4 `src/services/uriService.ts`: `buildItemUris(item)` and
       `buildAnnotationUri(...)`. Emit only the `library` path segment; convert
       Zotero's 0-based `pageIndex` to 1-based here. No group branch exists.
       Covers: U-1, U-2, U-3, U-5.
-- [ ] 2.5 `test/unit/uriService.test.ts`: select/open/open-pdf forms, `?page=`
+- [x] 2.5 `test/unit/uriService.test.ts`: select/open/open-pdf forms, `?page=`
       1-based conversion, `?annotation=`, combined params. Covers: U-1..U-3.
-- [ ] 2.6 `test/unit/itemResolver.test.ts`: group-library key is refused with
+- [x] 2.6 `test/unit/itemResolver.test.ts`: group-library key is refused with
       `GroupLibraryUnsupportedError`, not silently resolved. Covers: LB-2.
-- [ ] 2.7 `src/services/mutationService.ts`: promise-chain write queue
+- [x] 2.7 `src/services/mutationService.ts`: promise-chain write queue
       `enqueue(label, fn)` with a bounded wait, plus a
       `runInTransaction(fn)` helper over `Zotero.DB.executeTransaction`.
       Covers: E-2.
-- [ ] 2.8 `test/unit/mutationService.test.ts`: two concurrent enqueues never
+- [x] 2.8 `test/unit/mutationService.test.ts`: two concurrent enqueues never
       interleave; bounded wait produces `TimeoutError`. Covers: E-2.
 
 ## Phase 3 — Transport, protocol, registry
