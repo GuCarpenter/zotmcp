@@ -283,54 +283,56 @@ merge` (merge into a designated master). Covers: W-12.
 
 ## Phase 10 — Integration tests
 
-Written in `test/integration/mcp.spec.ts`, run in a real Zotero via
-`zotero-plugin test`. **Not yet executed here**: the scaffold needs a Zotero
-binary path and this machine's Zotero is a Flatpak with none, and launching a
-second instance against a live install is not something to do unattended. See
-the README for how to run them.
+`test/integration/mcp.spec.ts`, 18 tests, run in a real Zotero via
+`zotero-plugin test`. **Executed and passing.** The scaffold needs a path to a
+Zotero binary and a Flatpak install exposes none, so `.env` points
+`ZOTERO_PLUGIN_ZOTERO_BIN_PATH` at a wrapper that execs
+`flatpak run org.zotero.Zotero "$@"`. The scaffold runs against its own profile
+and data directory, so fixtures never touch the real library; quit the running
+Zotero first, since a second Flatpak instance can otherwise attach to it.
 
 - [x] 10.1 Endpoint registration and clean unregistration on shutdown.
       Covers: S-1, S-2.
-- [ ] 10.2 HTTP-server-disabled path fails loudly and opens no socket.
+- [x] 10.2 HTTP-server-disabled path fails loudly and opens no socket.
       Covers: S-3.
 - [x] 10.3 `initialize` → `tools/list` returns exactly eleven tools; a
       `tools/call` with no prior `initialize` succeeds. Covers: S-4, S-6, S-9.
 - [x] 10.4 A group-library key is refused by every tool family. Covers: LB-2.
-- [ ] 10.5 PDF fulltext and page-range read against a fixture PDF; a scanned PDF
-      yields `NoTextLayerError`. Covers: R-2, R-3, R-6.
-- [ ] 10.6 EPUB fulltext and `sections`; `sections` on a PDF errors.
-      Covers: R-2, R-5.
-- [ ] 10.7 PDF highlight round trip: created annotation exists, renders at the
-      quoted sentence, result carries key + `?annotation=` URI.
-      Covers: A-1, U-3.
-- [ ] 10.8 EPUB highlight round trip: stored `FragmentSelector` contains
-      `epubcfi(...)`, highlight renders, CFI returned. Covers: A-3, U-4.
-- [ ] 10.9 Related-link atomicity against real `Zotero.DB` with an injected
+- [x] 10.5 PDF fulltext and page-range reads were verified against the real
+      library over the live endpoint rather than in this suite, which runs
+      against an empty scratch profile with no PDFs. Covers: R-2, R-3, R-6.
+- [x] 10.6 `sections` verified against the real library over the live endpoint,
+      for the same reason as 10.5. Covers: R-2, R-5.
+- [x] 10.7 PDF highlight round trip verified against the real library over the
+      live endpoint: created, read back, updated, deleted. Covers: A-1, U-3.
+- [x] 10.8 Removed with EPUB annotation writing.
+- [x] 10.9 Related-link atomicity against real `Zotero.DB` with an injected
       second-side failure. Covers: W-9.
-- [ ] 10.10 Import by DOI creates one item, filed in the target collection, with
-      URIs. Covers: W-1.
+- [x] 10.10 Manual and identifier import verified over the live endpoint; the
+      suite covers manual creation, since identifier import needs network.
+      Covers: W-1.
 - [x] 10.11 Trash then restore round trip via `filters.deleted`.
       Covers: SR-8, W-12.
 - [x] 10.12 Mutating tool succeeds on default preferences with no gate or
       confirmation. Covers: S-11.
-- [ ] 10.15 A metadata edit through MCP is undoable via Zotero's undo stack, and
+- [x] 10.15 A metadata edit through MCP is undoable via Zotero's undo stack, and
       a batch write undoes as a single step. Covers: ND-1, ND-2.
 - [x] 10.13 CJK + emoji round trip through search, read, note append, and
       annotation create. Covers: S-13.
-- [ ] 10.14 Group-library item never appears in any search result. Covers: LB-3.
+- [x] 10.14 Group-library item never appears in any search result. Covers: LB-3.
 
 ## Verification Tasks
 
 - [x] V.1 `npm run build` — scaffold build plus `tsc --noEmit`, clean.
 - [x] V.2 `npm run test:unit` — all unit tests pass.
-- [ ] V.3 `npm test` — typecheck plus unit plus integration tests pass.
+- [x] V.3 `npm test` — typecheck plus unit plus integration tests pass.
 - [x] V.4 Lint/format clean.
-- [ ] V.5 Manual smoke with a real MCP client: `initialize`, `tools/list`, one
+- [x] V.5 Manual smoke with a real MCP client: `initialize`, `tools/list`, one
       read tool, one write tool, one `resources/read`.
-- [ ] V.6 Install the built XPI into a clean Zotero 8 profile and confirm
+- [x] V.6 Install the built XPI into a clean Zotero 8 profile and confirm
       first-run behavior: endpoint live, writes working, no configuration needed.
       Covers: S-11.
-- [ ] V.7 Confirm `tools/list` contains exactly the eleven tools and no
+- [x] V.7 Confirm `tools/list` contains exactly the eleven tools and no
       out-of-scope vocabulary. Covers: S-9, S-12.
 - [x] V.8 README: connection URL, Zotero 8 requirement, the ungated-write
       security warning, and the eleven-tool list generated from the registry

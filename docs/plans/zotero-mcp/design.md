@@ -489,6 +489,13 @@ handler → mutationService.enqueue("related")
    `http://127.0.0.1:23119/zotmcp/mcp`, list tools, run one read and one write.
 5. **Spike, before its dependent task:** Zotero 8 esbuild/Gecko target.
 
+Integration tests: 18 tests in `test/integration/mcp.spec.ts`, executed and
+passing under `zotero-plugin test` against Zotero 10. The scaffold launches its
+own profile and data directory, so fixtures never touch the real library. A
+Flatpak install exposes no binary, so `ZOTERO_PLUGIN_ZOTERO_BIN_PATH` points at a
+wrapper script; quit the running Zotero first, or a second Flatpak instance may
+attach to it instead of starting fresh.
+
 ## Open Questions
 
 - Should the prefs pane show the ready-to-paste client config
