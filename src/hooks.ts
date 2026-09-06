@@ -19,6 +19,9 @@ import {
 
 const SERVER_ENABLED_PREF = "mcp.server.enabled";
 
+/** Supplies the Undo/Redo menu labels for writes made through MCP. */
+const UNDO_LABEL_FTL = [`${config.addonRef}.ftl`];
+
 let prefObserverId: symbol | string | undefined;
 
 export async function onStartup(): Promise<void> {
@@ -43,6 +46,10 @@ export async function onStartup(): Promise<void> {
   addon.data.gateway = gateway;
   addon.data.dispatchDeps = deps;
 
+  // Undo labels are formatted through Zotero.ftl rather than window l10n, so the
+  // plugin's FTL has to be in Zotero's own bundle.
+  gateway.registerLocalization(UNDO_LABEL_FTL);
+
   startOrStopServer();
   watchServerPref();
 }
@@ -52,6 +59,7 @@ export async function onShutdown(): Promise<void> {
 
   if (addon.data.gateway) {
     unregisterEndpoint(addon.data.gateway);
+    addon.data.gateway.unregisterLocalization(UNDO_LABEL_FTL);
   }
   addon.data.endpointRegistered = false;
   addon.data.alive = false;

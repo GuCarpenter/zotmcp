@@ -128,11 +128,13 @@ implementing SR-5 and the `pdfService` fallback (R-2) — the design's reference
 
 **Zotero 10 has native undo/redo** for modifications to existing objects, via
 `item.saveTx({ undoAction, undoActionArgs })` or
-`Zotero.UndoHistory.stageAction()` inside a transaction. Undo was dropped from
-scope because a durable journal was out of scope; Zotero 10 offers most of the
-benefit for the cost of one argument per save, which is worth revisiting given
-that writes are ungated. Creating or permanently deleting an object is not
-undoable; trashing is.
+`Zotero.UndoHistory.stageAction()` inside a transaction. **This is now in scope**
+(see `src/services/undo.ts`): the plugin-owned journal stays rejected, but every
+undoable write carries a label, so an MCP edit is reversible with Ctrl+Z in
+Zotero's UI. Labels live in the plugin's FTL and are registered with `Zotero.ftl`
+at startup, because undo labels are formatted through `Zotero.ftl` rather than
+window l10n. Creating or permanently deleting an object is not undoable; trashing
+is, so tools say so rather than implying reversibility.
 
 **Item data validation now throws** where it used to corrupt: `setType()` and
 `setField('itemTypeID')` reject converting a regular item to or from an
@@ -333,6 +335,18 @@ rects. Where exact rects cannot be derived, return an error rather than an
 annotation at a guessed position — a wrong-position highlight is worse than a
 refusal. Area annotations (A-2) take caller-supplied PDF-user-space rects
 directly. Non-PDF/EPUB attachments are rejected naming the content type.
+
+### Undo (ND-1..ND-5)
+
+`src/services/undo.ts` holds the action IDs and two helpers: `undoLabel(action,
+count)` produces the `saveTx` options for a single-object edit, and
+`stageUndo(gateway, action, count)` labels a transaction so several saves collapse
+into one undo step. `stageUndoAction` on the gateway swallows failures and logs
+them — a missing undo entry costs a Ctrl+Z, never the write.
+
+A unit test asserts every ID in `UNDO_ACTIONS` exists in `zotmcp.ftl`, since a
+missing one would otherwise appear as a raw message ID in Zotero's Undo menu and
+only at runtime.
 
 ### Mutations (E-2, W-9, W-14)
 

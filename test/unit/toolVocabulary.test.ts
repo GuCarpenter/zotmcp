@@ -11,8 +11,6 @@ const FORBIDDEN = [
   "embedding",
   "vector",
   "cosine",
-  "undo",
-  "revert",
   "approval",
   "confirmation",
   "group librar",

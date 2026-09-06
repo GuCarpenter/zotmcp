@@ -24,7 +24,7 @@ phase can be verified end to end against a real MCP client.
 - [x] 1.2 `tsconfig.json`, `eslint`/`prettier` config, `.gitignore`
       (include `.scaffold/`).
 - [x] 1.3 `addon/manifest.json`: WebExtension-style manifest, addon ID,
-      `strict_min_version` 8.0. Covers: proposal decision (Zotero 8 minimum).
+      `strict_min_version` 10.0, `strict_max_version` 10.0.*. Covers: S-0.
 - [x] 1.4 `addon/bootstrap.js` + `zotero-plugin.config.ts`: entry `src/index.ts`,
       bundle output, target from task 0.1.
 - [x] 1.5 `addon/prefs.js`: `mcp.server.enabled` default `true`. No write gate
@@ -63,6 +63,13 @@ modules that make the spec's structural guarantees hold.
       Covers: E-2.
 - [x] 2.8 `test/unit/mutationService.test.ts`: two concurrent enqueues never
       interleave; bounded wait produces `TimeoutError`. Covers: E-2.
+- [x] 2.9 `src/services/undo.ts` + `addon/locale/en-US/zotmcp.ftl`: undo action
+      IDs, `undoLabel()` save options, `stageUndo()` for transactions, and the
+      Fluent labels behind them; gateway gains `stageUndoAction` and
+      `registerLocalization`/`unregisterLocalization`, wired in `hooks.ts`.
+      Covers: ND-1, ND-2, ND-3, ND-5.
+- [x] 2.10 `test/unit/undo.test.ts`: label shape, staged transaction action, and
+      every undo ID present in the FTL. Covers: ND-3.
 
 ## Phase 3 — Transport, protocol, registry
 
@@ -114,18 +121,23 @@ modules that make the spec's structural guarantees hold.
 - [ ] 4.1 `src/services/searchService.ts`: keyword search via
       `quicksearch-titleCreatorYear`, ranked, `limit`/`offset`, default 25, hard
       cap 100, always scoped to the user library. Covers: SR-1, LB-3, E-3.
-- [ ] 4.2 `searchService`: pass-through `conditions[]` with
-      `joinMode: all | any`. Covers: SR-2.
+- [ ] 4.2 `searchService`: pass-through `conditions[]` with `joinMode: all | any`,
+      built on Zotero 10 condition groups (`groupStart`/`groupEnd`) so nested
+      logic is expressible; never pass the legacy `required` argument, which now
+      throws. Covers: SR-2.
 - [ ] 4.3 `searchService`: compile a boolean tag expression into tag conditions +
       joinMode. Covers: SR-3.
 - [ ] 4.4 `searchService`: citation-key lookup against the `Extra`
       `Citation Key:` line; when BetterBibTeX is absent, return an explanatory
       result rather than an opaque failure. Covers: SR-4.
-- [ ] 4.5 `searchService`: full-text search via `fulltextContent` **with
-      resolve-to-parents** (matches are attachments and vanish otherwise), plus a
-      bounded snippet cut around each hit. Covers: SR-5.
-- [ ] 4.6 `searchService`: annotation search by text/color/tag, resolved to parent
-      item plus page/location. Covers: SR-6.
+- [ ] 4.5 `searchService`: full-text search via `fulltextContent` with
+      `resultLevel: 'item'` (Zotero 10's supported way to return owning items;
+      the old resolve-to-parents step is obsolete, and `fulltextWord` was
+      removed), plus a bounded snippet around each hit. Verify the surviving
+      `Zotero.FullText` API for snippets — Zotero 10 moved full text to FTS5 and
+      removed several methods. Covers: SR-5.
+- [ ] 4.6 `searchService`: annotation search by text/color/tag using
+      `resultLevel`, returning the parent item plus page/location. Covers: SR-6.
 - [ ] 4.7 `searchService`: `entity: collections` flat and recursive tree with item
       counts; `entity: tags` with counts; both paginated. Covers: SR-7, E-3.
 - [ ] 4.8 `searchService`: `filters.deleted` trash listing. Covers: SR-8.
@@ -201,7 +213,9 @@ modules that make the spec's structural guarantees hold.
 - [ ] 7.4 `src/tools/libraryImport.ts`: `kind: identifiers | files | manual`,
       optional target collection. Covers: W-1..W-3.
 - [ ] 7.5 `src/services/libraryMutation/metadata.ts`: field and creator updates
-      reporting each changed field. Covers: W-4, W-14.
+      reporting each changed field, saved with the `editMetadata` undo label.
+      Note Zotero 10 throws on `setType`/`setField('itemTypeID')` across the
+      regular/attachment/note/annotation boundary. Covers: W-4, W-14, ND-1.
 - [ ] 7.6 `src/services/libraryMutation/tags.ts`: item tags add / remove / set
       (full replace). Covers: W-6.
 - [ ] 7.7 `src/services/libraryMutation/tagObject.ts`: library-wide tag rename /
@@ -212,8 +226,9 @@ modules that make the spec's structural guarantees hold.
       inside **one** `Zotero.DB.executeTransaction`, so a second-side failure
       rolls back the first and no half-link can exist. Covers: W-9.
 - [ ] 7.10 `src/tools/libraryUpdate.ts`: `kind` facade + batch `operations[]`
-      executed sequentially through the write queue with per-operation results.
-      Covers: W-4..W-9, W-14, E-2.
+      executed sequentially through the write queue with per-operation results;
+      a multi-object operation stages one undo action so it undoes as a single
+      step. Covers: W-4..W-9, W-14, E-2, ND-2.
 - [ ] 7.11 `src/services/collectionService.ts`: create (optional parent), rename,
       move, delete with explicit `deleteItems` opt-in defaulting to leaving items
       in place; add/remove membership. Covers: W-10, W-11.
@@ -222,7 +237,10 @@ modules that make the spec's structural guarantees hold.
 merge` (merge into a designated master). Covers: W-12.
 - [ ] 7.14 `src/tools/attachmentUpdate.ts` + service: rename file on disk, relink
       to a new path, delete (trash); `FileMissingError` when the file is absent.
-      Covers: W-13, E-1.
+      Zotero 10 rejects a stored-file path containing a slash. Covers: W-13, E-1.
+- [ ] 7.17 Every write path carries an undo label, and tools whose effect Zotero
+      cannot undo (item creation, permanent deletion) say so in their result.
+      Covers: ND-1, ND-4.
 - [ ] 7.15 `test/unit/related.test.ts`: injected second-side failure leaves item A
       unchanged — the regression test for the half-link bug both prior-art
       projects have. Covers: W-9.
@@ -284,6 +302,8 @@ Run in a real Zotero via `zotero-plugin test`.
       Covers: SR-8, W-12.
 - [ ] 10.12 Mutating tool succeeds on default preferences with no gate or
       confirmation. Covers: S-11.
+- [ ] 10.15 A metadata edit through MCP is undoable via Zotero's undo stack, and
+      a batch write undoes as a single step. Covers: ND-1, ND-2.
 - [ ] 10.13 CJK + emoji round trip through search, read, note append, and
       annotation create. Covers: S-13.
 - [ ] 10.14 Group-library item never appears in any search result. Covers: LB-3.

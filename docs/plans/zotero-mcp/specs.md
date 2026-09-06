@@ -5,8 +5,9 @@ Requirement IDs are referenced by `design.md` and `tasks.md`.
 
 Prior-art lessons that became hard requirements are marked **[PA]**.
 
-Scope reminders: **My Library only**, no group libraries, no semantic search, no
-external scholarly search, no undo, writes enabled by default.
+Scope reminders: **Zotero 10 only**, **My Library only**, no group libraries, no
+semantic search, no external scholarly search, writes enabled by default, undo
+supplied by Zotero's own undo stack.
 
 ---
 
@@ -14,6 +15,9 @@ external scholarly search, no undo, writes enabled by default.
 
 ### S — Server, transport, protocol
 
+- **S-0** The plugin declares `strict_min_version` 10.0 and installs on
+  Zotero 10. Zotero enforces the declared range in release builds, so an
+  out-of-range manifest disables the plugin rather than warning.
 - **S-1** The plugin registers its MCP endpoint on **Zotero's own HTTP server**
   at path `/zotmcp/mcp`, using the port from
   `extensions.zotero.httpServer.port` (default 23119) read at runtime. The plugin
@@ -193,6 +197,22 @@ external scholarly search, no undo, writes enabled by default.
 - **W-14** Every mutating tool reports what changed, so a caller can verify the
   effect without a second read.
 
+### ND — Undo (Zotero 10 native stack)
+
+- **ND-1** Every write that modifies an existing object saves with an
+  `undoAction` label, so the change appears in Zotero's Undo menu and is
+  reversible with Ctrl+Z.
+- **ND-2** A write that saves several objects stages one undo action inside its
+  transaction, so the whole operation undoes as a single step rather than
+  object by object.
+- **ND-3** Every `undoAction` ID used by the plugin exists in the plugin's FTL,
+  which is registered with `Zotero.ftl` at startup and removed at shutdown. A
+  missing ID would surface as a raw message ID in the Undo menu.
+- **ND-4** Operations Zotero cannot undo — creating an item, permanently
+  deleting one — state that in their result rather than implying reversibility.
+- **ND-5** Failure to stage an undo label never fails the write itself; it is
+  logged and the write proceeds.
+
 ### X — Privileged script execution
 
 - **X-1** `zotero_script` executes caller JavaScript in the Zotero runtime with
@@ -308,6 +328,19 @@ Given an item in the trash, listed via `filters.deleted`
 When `library_delete mode: restore` targets it
 Then it reappears in normal listings and leaves the trash listing. (SR-8, W-12)
 
+### Scenario: an MCP metadata edit is undoable in Zotero
+
+Given an item edited through `library_update kind:'metadata'`
+When the user opens Zotero's Edit menu
+Then Undo is enabled with the plugin's label, and choosing it restores the
+previous field values. (ND-1, ND-3)
+
+### Scenario: a batch write undoes as one step
+
+Given three items tagged in a single `library_update` call
+When the user chooses Undo once
+Then all three items lose the tag together. (ND-2)
+
 ### Scenario: writes work out of the box
 
 Given a fresh install with default preferences
@@ -356,7 +389,9 @@ Then all characters are byte-identical to the input. (S-13)
 
 ## Out Of Scope
 
-Group libraries and multi-library management; semantic/vector search and any
+Zotero 8 and 9 support; a plugin-owned change journal, multi-step revert tooling
+and `undo_last_action`/`revert_changes` MCP tools (Zotero's own undo stack covers
+this instead); group libraries and multi-library management; semantic/vector search and any
 embedding code; external scholarly search (OpenAlex, arXiv, Europe PMC, Scite)
 and citation-graph traversal; undo, revert, change journals, approval cards;
 authentication and remote binding; SSE/server push; MinerU and all external

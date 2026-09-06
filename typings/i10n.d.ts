@@ -4,4 +4,18 @@
 // @ts-nocheck
 export type FluentMessageId =
   | 'pref-server-enabled'
-  | 'pref-title';
+  | 'pref-title'
+  | 'zotmcp-undo-edit-annotation'
+  | 'zotmcp-undo-edit-collection-items'
+  | 'zotmcp-undo-edit-metadata'
+  | 'zotmcp-undo-edit-note'
+  | 'zotmcp-undo-edit-related'
+  | 'zotmcp-undo-edit-tag-library'
+  | 'zotmcp-undo-edit-tags'
+  | 'zotmcp-undo-move-collection'
+  | 'zotmcp-undo-relink-attachment'
+  | 'zotmcp-undo-rename-attachment'
+  | 'zotmcp-undo-restore'
+  | 'zotmcp-undo-script'
+  | 'zotmcp-undo-set-parent'
+  | 'zotmcp-undo-trash';

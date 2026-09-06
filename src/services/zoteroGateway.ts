@@ -35,6 +35,16 @@ export interface ZoteroGateway {
    */
   executeTransaction<T>(fn: () => Promise<T>): Promise<T>;
 
+  /**
+   * Labels the current transaction so its saves land on Zotero's native undo
+   * stack as a single step. Only meaningful inside `executeTransaction`.
+   */
+  stageUndoAction(action: string, args?: Record<string, unknown>): void;
+
+  /** Registers/removes the plugin's FTL, which supplies undo menu labels. */
+  registerLocalization(files: string[]): void;
+  unregisterLocalization(files: string[]): void;
+
   /** Reads a Zotero-scoped preference, e.g. `httpServer.port`. */
   getZoteroPref(key: string): unknown;
 
@@ -91,6 +101,46 @@ export class RealZoteroGateway implements ZoteroGateway {
 
   public async executeTransaction<T>(fn: () => Promise<T>): Promise<T> {
     return Zotero.DB.executeTransaction(fn);
+  }
+
+  public stageUndoAction(action: string, args?: Record<string, unknown>): void {
+    try {
+      (
+        Zotero as unknown as {
+          UndoHistory?: {
+            stageAction(action: string, args?: Record<string, unknown>): void;
+          };
+        }
+      ).UndoHistory?.stageAction(action, args);
+    } catch (e) {
+      // A missing undo label costs the user a Ctrl+Z, not their data, so it must
+      // never fail the write itself.
+      this.log("WARN could not stage an undo action", action, e);
+    }
+  }
+
+  public registerLocalization(files: string[]): void {
+    try {
+      (
+        Zotero as unknown as {
+          ftl?: { addResourceIds(files: string[]): void };
+        }
+      ).ftl?.addResourceIds(files);
+    } catch (e) {
+      this.log("WARN could not register localization", files, e);
+    }
+  }
+
+  public unregisterLocalization(files: string[]): void {
+    try {
+      (
+        Zotero as unknown as {
+          ftl?: { removeResourceIds(files: string[]): void };
+        }
+      ).ftl?.removeResourceIds(files);
+    } catch (e) {
+      this.log("WARN could not unregister localization", files, e);
+    }
   }
 
   public getZoteroPref(key: string): unknown {

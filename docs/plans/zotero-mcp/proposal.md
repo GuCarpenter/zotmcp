@@ -10,7 +10,7 @@ functions.
 
 ## Goals
 
-- Ship a Zotero 8+ plugin with an embedded MCP server.
+- Ship a Zotero 10 plugin with an embedded MCP server.
 - Implement MCP `tools/list`, `tools/call`, and MCP resources over Streamable
   HTTP, served from Zotero's own HTTP server on its existing port.
 - Provide lexical metadata and full-text search with no embedding or vector
@@ -37,7 +37,8 @@ functions.
   Docker packaging, client configuration generation.
 - MinerU, PDF Inspector, Poppler, or any external document-conversion runtime.
 - Automatic citation-to-Related-item linking.
-- Durable undo journals, multi-step revert, write approval cards.
+- A plugin-owned durable change journal, multi-step revert, write approval
+  cards. (Zotero 10's own undo stack is used instead — see Decisions.)
 - Third-party plugin tool registration.
 
 ## Scope
@@ -85,7 +86,7 @@ functions.
 
 ### Advanced runtime operation
 
-- `zotero_script` with read and write modes, no approval and no undo.
+- `zotero_script` with read and write modes, no approval gate.
 
 ## Success Criteria
 
@@ -108,7 +109,9 @@ functions.
 - **Unrestricted writes and privileged scripts are high risk.** Any local
   process — including a web page able to reach the port — can modify or delete
   library data. Mitigation for now is loopback binding plus documentation; bearer
-  auth, confirmation, and undo remain future options.
+  auth and confirmation remain future options. Zotero 10's local-server
+  hardening already drops browser-originated requests, which removes the worst
+  case, and every undoable write lands on Zotero's undo stack.
 - **Sharing Zotero's HTTP server** means the endpoint depends on Zotero's
   connector server being enabled, and puts the MCP endpoint on a port that
   browsers already talk to. Endpoint path must be namespaced to avoid collision
@@ -123,7 +126,10 @@ functions.
 
 ## Decisions
 
-- **Minimum Zotero version: 8.0** (`strict_min_version` 8.0).
+- **Minimum Zotero version: 10.0** (`strict_min_version` 10.0,
+  `strict_max_version` 10.0.*). Zotero 10 changed the search API and full-text
+  layer enough that supporting 8 and 9 would mean branching the two services
+  this plugin is built around, for no user this project has.
 - **Built independently** — fresh codebase; prior art is reference only.
 - **Transport: POST-only, stateless Streamable HTTP** on Zotero's existing HTTP
   server at port 23119, endpoint path `/zotmcp/mcp`. No sessions, no
@@ -137,8 +143,12 @@ functions.
 - **Writes enabled by default**, no gate.
 - **My Library only**; no library parameter, no `libraries` entity, no
   `switch_library`.
-- **Undo removed** — a durable journal is out of scope, so undo is dropped
-  rather than shipped unreliably.
+- **Undo via Zotero 10's native stack** — every write that modifies an existing
+  object is saved with an `undoAction` label, and multi-object transactions stage
+  a single undo step, so an MCP edit is reversible with Ctrl+Z in Zotero's own
+  UI. This replaces the rejected plugin-owned journal: the cost is one argument
+  per save. Zotero cannot undo object creation or permanent deletion, so tools
+  whose effect is not undoable say so in their result.
 - **External scholarly search removed** as out of Zotero's core scope.
 
 ## Open Questions

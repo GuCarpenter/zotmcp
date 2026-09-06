@@ -39,6 +39,11 @@ export class FakeGateway implements ZoteroGateway {
   public popups: { title: string; body: string; isError: boolean }[] = [];
   public logs: unknown[][] = [];
   public transactionCount = 0;
+  public stagedUndoActions: {
+    action: string;
+    args?: Record<string, unknown>;
+  }[] = [];
+  public registeredLocalizations: string[] = [];
   public httpServerEnabled = true;
   public port = 23119;
 
@@ -102,6 +107,20 @@ export class FakeGateway implements ZoteroGateway {
       throw new Error("simulated commit failure");
     }
     return result;
+  }
+
+  public stageUndoAction(action: string, args?: Record<string, unknown>): void {
+    this.stagedUndoActions.push({ action, args });
+  }
+
+  public registerLocalization(files: string[]): void {
+    this.registeredLocalizations.push(...files);
+  }
+
+  public unregisterLocalization(files: string[]): void {
+    this.registeredLocalizations = this.registeredLocalizations.filter(
+      (file) => !files.includes(file),
+    );
   }
 
   public getPref(key: string): unknown {
