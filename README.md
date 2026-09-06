@@ -37,9 +37,16 @@ arbitrary privileged scripts through `zotero_script`. There is no confirmation
 step. The mitigations are that the server is loopback-only and that Zotero 10
 blocks browser-originated requests.
 
-Edits and trashing land on Zotero's own undo stack, so Ctrl+Z reverses them.
-Creating an item, permanently deleting one, and merging duplicates are **not**
-undoable — the tools say so in their results.
+Edits, trashing, merges and collection deletion all land on Zotero's own undo
+stack, so Ctrl+Z reverses them — Zotero 10 trashes rather than erases, and
+trashed objects can also be restored. What is **not** undoable is creating an
+object and permanently deleting one from the trash. The tools say which applies
+in their results.
+
+A `zotero_script` write is not undoable by default, because a script's own
+`saveTx()` calls carry no undo label. Pass `transaction: true` to run the script
+inside one transaction, which makes every change it saves a single undo step; the
+tradeoff is that the database is held for the script's whole run.
 
 ## Tools
 

@@ -117,6 +117,11 @@ export interface ZoteroGateway {
     deleteItems: boolean,
   ): Promise<void>;
 
+  /**
+   * Merges duplicates. Zotero 10 deprecated `Zotero.Items.merge()` in favour of
+   * `mergeItems.mjs`, which wraps itself in a transaction and stages
+   * `undo-action-merge-items`, so a merge is reversible with Ctrl+Z.
+   */
   mergeItems(master: Zotero.Item, others: Zotero.Item[]): Promise<void>;
 
   /** Creates a note item, attached to `parent` when given. */
@@ -552,6 +557,24 @@ export class RealZoteroGateway implements ZoteroGateway {
     master: Zotero.Item,
     others: Zotero.Item[],
   ): Promise<void> {
+    const chromeUtils = ChromeUtils as unknown as {
+      importESModule(url: string): {
+        mergeItems(master: Zotero.Item, others: Zotero.Item[]): Promise<void>;
+      };
+    };
+
+    try {
+      const { mergeItems } = chromeUtils.importESModule(
+        "chrome://zotero/content/mergeItems.mjs",
+      );
+      await mergeItems(master, others);
+      return;
+    } catch (e) {
+      // Older builds may not ship the module; the deprecated entry point does
+      // the same work and logs a deprecation warning.
+      this.log("WARN mergeItems.mjs unavailable, using Zotero.Items.merge", e);
+    }
+
     await (
       Zotero.Items as unknown as {
         merge(master: Zotero.Item, others: Zotero.Item[]): Promise<void>;

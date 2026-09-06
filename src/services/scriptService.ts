@@ -9,6 +9,7 @@
 
 import { InvalidArgumentError, TimeoutError } from "../errors";
 import type { MutationService } from "./mutationService";
+import { stageUndo, UNDO_ACTIONS } from "./undo";
 import type { ZoteroGateway } from "./zoteroGateway";
 
 export const DEFAULT_SCRIPT_TIMEOUT_MS = 30_000;
@@ -18,6 +19,8 @@ export type ScriptMode = "read" | "write";
 
 export interface ScriptResult {
   mode: ScriptMode;
+  /** True when the script ran inside one transaction and one undo step. */
+  transactional?: boolean;
   description?: string;
   ok: boolean;
   /** JSON-safe form of whatever the script returned. */
@@ -51,6 +54,7 @@ export class ScriptService {
     script: unknown;
     description?: string;
     timeoutMs?: unknown;
+    transaction?: unknown;
   }): Promise<ScriptResult> {
     const mode = input.mode === "write" ? "write" : "read";
     if (input.mode !== "read" && input.mode !== "write") {
@@ -64,15 +68,30 @@ export class ScriptService {
 
     const timeoutMs = this.normalizeTimeout(input.timeoutMs);
     const source = input.script;
+    const transactional = input.transaction === true;
+
+    if (transactional && mode !== "write") {
+      throw new InvalidArgumentError(
+        '"transaction" only applies to mode "write".',
+      );
+    }
 
     const execute = () =>
-      this.execute(source, mode, timeoutMs, input.description);
+      this.execute(source, mode, timeoutMs, input.description, transactional);
 
     // A write script goes through the same queue as every other write, so it
     // cannot interleave with a concurrent tool call.
-    return mode === "write"
-      ? this.mutations.enqueue("script", execute)
-      : execute();
+    if (mode !== "write") return execute();
+
+    if (!transactional) return this.mutations.enqueue("script", execute);
+
+    // Inside one transaction every save the script makes records its own
+    // changes, and this label collapses them into a single undo step. The cost is
+    // that the database is held for the script's whole run, so it is opt-in.
+    return this.mutations.enqueueTransaction("script", async () => {
+      stageUndo(this.gateway, UNDO_ACTIONS.script);
+      return execute();
+    });
   }
 
   private async execute(
@@ -80,6 +99,7 @@ export class ScriptService {
     mode: ScriptMode,
     timeoutMs: number,
     description?: string,
+    transactional = false,
   ): Promise<ScriptResult> {
     const logs: string[] = [];
     const startedAt = Date.now();
@@ -112,17 +132,27 @@ export class ScriptService {
 
       return {
         mode,
+        ...(transactional ? { transactional } : {}),
         ...(description ? { description } : {}),
         ok: true,
         result,
         resultType,
         logs,
-        ...(note ? { note } : {}),
+        ...(note
+          ? { note }
+          : transactional
+            ? {
+                note:
+                  "Ran inside one transaction, so the changes it saved are a " +
+                  "single step on Zotero's undo stack.",
+              }
+            : {}),
       };
     } catch (e) {
       const error = e as Error;
       return {
         mode,
+        ...(transactional ? { transactional } : {}),
         ...(description ? { description } : {}),
         ok: false,
         resultType: "error",

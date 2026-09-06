@@ -242,6 +242,7 @@ export async function zoteroScript(
       script: args.script,
       description: str(args, "description"),
       timeoutMs: args.timeoutMs,
+      transaction: args.transaction,
     }),
   );
 }

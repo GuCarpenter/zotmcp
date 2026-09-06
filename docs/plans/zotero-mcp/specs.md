@@ -222,8 +222,14 @@ supplied by Zotero's own undo stack.
 - **ND-3** Every `undoAction` ID used by the plugin exists in the plugin's FTL,
   which is registered with `Zotero.ftl` at startup and removed at shutdown. A
   missing ID would surface as a raw message ID in the Undo menu.
-- **ND-4** Operations Zotero cannot undo — creating an item, permanently
-  deleting one — state that in their result rather than implying reversibility.
+- **ND-4** Every result states whether Zotero can reverse the operation.
+  Creating an object and permanently erasing one are not undoable; editing,
+  trashing, merging and collection deletion are, because Zotero 10 trashes
+  rather than erases and stages its own undo actions.
+- **ND-6** `zotero_script` in write mode accepts `transaction: true`, running the
+  script inside one transaction with a staged undo action so its saves become a
+  single undo step. Without it a script's writes are not undoable, since a
+  script's own `saveTx()` carries no label. The result reports which applied.
 - **ND-5** Failure to stage an undo label never fails the write itself; it is
   logged and the write proceeds.
 

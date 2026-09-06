@@ -346,7 +346,8 @@ const specs: ToolSpec[] = [
     description:
       "Run JavaScript inside Zotero with the global Zotero object available, for " +
       "anything the other tools do not cover. Use mode 'read' to gather data and " +
-      "'write' to change the library. Exceptions are returned with their stack.",
+      "'write' to change the library; add transaction true to make a write " +
+      "reversible as one step. Exceptions are returned with their stack.",
     mutability: "write",
     inputSchema: OBJECT_SCHEMA(
       {
@@ -359,6 +360,14 @@ const specs: ToolSpec[] = [
         timeoutMs: {
           type: "number",
           description: "Default 30000, maximum 120000.",
+        },
+        transaction: {
+          type: "boolean",
+          description:
+            "For mode 'write': run inside one database transaction so every " +
+            "change the script saves becomes a single step on Zotero's undo " +
+            "stack. This holds the database for the script's whole run, so use " +
+            "it for bulk edits rather than long or network-bound scripts.",
         },
       },
       ["mode", "script"],

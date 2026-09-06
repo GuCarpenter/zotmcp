@@ -111,8 +111,10 @@ export class CollectionService {
         name,
         deletedItems: deleteItems,
         note: deleteItems
-          ? "Member items were moved to the trash and can be restored."
-          : "Member items were left in the library.",
+          ? "The collection and its member items were moved to the trash, and " +
+            "both can be restored. Zotero records this on its undo stack."
+          : "The collection was moved to the trash and can be restored; its " +
+            "member items were left in the library.",
       };
     });
   }
@@ -397,7 +399,9 @@ export class DeleteService {
       return {
         masterKey: master.key,
         merged: others.map((item) => item.key),
-        note: "Merging is not undoable; the merged items became replaced items.",
+        note:
+          "The merged items were moved to the trash and recorded as replaced " +
+          "items. Zotero stages this as one undo step, so Ctrl+Z reverses it.",
       };
     });
   }

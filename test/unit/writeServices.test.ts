@@ -307,6 +307,8 @@ describe("write services", function () {
       const kept = await collections.remove("COLL0001", false);
       expect(gateway.erasedCollections[0].deleteItems).to.equal(false);
       expect(String(kept.note)).to.include("left in the library");
+      // Zotero 10 sends a deleted collection to the trash, so it is restorable.
+      expect(String(kept.note)).to.include("restored");
 
       gateway.addCollection({ key: "COLL0002", id: 2 });
       const trashed = await collections.remove("COLL0002", true);
@@ -452,7 +454,10 @@ describe("write services", function () {
         masterKey: "ABCD1234",
         otherKeys: ["BCDE2345"],
       });
-      expect(String(result.note)).to.include("not undoable");
+      // Zotero 10 merges inside a transaction and stages undo-action-merge-items,
+      // and the merged items are trashed rather than erased.
+      expect(String(result.note)).to.include("undo");
+      expect(String(result.note)).to.include("trash");
     });
 
     it("refuses to merge across item types", async function () {

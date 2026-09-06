@@ -91,6 +91,41 @@ describe("scriptService", function () {
     expect(result.ok).to.equal(true);
   });
 
+  it("runs a transactional write as one undo step", async function () {
+    gateway.scriptImplementation = () => "bulk edit done";
+
+    const result = await service.run({
+      mode: "write",
+      script: "...",
+      transaction: true,
+    });
+
+    expect(result.ok).to.equal(true);
+    expect(result.transactional).to.equal(true);
+    expect(gateway.transactionCount).to.equal(1);
+    expect(gateway.stagedUndoActions).to.deep.equal([
+      { action: "zotmcp-undo-script", args: { count: 1 } },
+    ]);
+    expect(result.note).to.include("single step");
+  });
+
+  it("does not open a transaction unless asked", async function () {
+    gateway.scriptImplementation = () => null;
+    await service.run({ mode: "write", script: "..." });
+    expect(gateway.transactionCount).to.equal(0);
+    expect(gateway.stagedUndoActions).to.deep.equal([]);
+  });
+
+  it("refuses transaction on a read script", async function () {
+    let error: any;
+    try {
+      await service.run({ mode: "read", script: "...", transaction: true });
+    } catch (e) {
+      error = e;
+    }
+    expect(error?.code).to.equal("invalid_argument");
+  });
+
   it("rejects a missing mode or empty script", async function () {
     for (const bad of [
       { mode: "sideways", script: "x" },
