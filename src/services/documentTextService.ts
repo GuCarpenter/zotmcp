@@ -101,10 +101,24 @@ function normalizeForMatch(value: string): string {
   return value.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
+/** A selector like `3` or `3.1.2`, as opposed to words. */
+const NUMERIC_SELECTOR = /^\d+(?:\.\d+)*$/;
+const LEADING_SECTION_NUMBER = /^(\d+(?:\.\d+)*)/;
+
 export function matchesSelector(title: string, selector: string): boolean {
-  const haystack = normalizeForMatch(title);
   const needle = normalizeForMatch(selector);
   if (!needle) return false;
+  const haystack = normalizeForMatch(title);
+
+  // A numeric selector must align with the title's own section number.
+  // Substring matching would make "3.1" match "2.3.1 Forward pass", which is a
+  // different section entirely.
+  if (NUMERIC_SELECTOR.test(needle)) {
+    const leading = LEADING_SECTION_NUMBER.exec(haystack)?.[1];
+    if (!leading) return false;
+    return leading === needle || leading.startsWith(`${needle}.`);
+  }
+
   return haystack.startsWith(needle) || haystack.includes(needle);
 }
 

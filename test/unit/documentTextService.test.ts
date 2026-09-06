@@ -5,6 +5,7 @@ import {
   DocumentTextService,
   firstPageIndex,
   flattenOutline,
+  matchesSelector,
   parsePageRange,
 } from "../../src/services/documentTextService";
 import type { SdtNode, SdtReader } from "../../src/services/zoteroGateway";
@@ -90,6 +91,32 @@ describe("documentTextService", function () {
 
     it("separates top-level blocks with a blank line", function () {
       expect(blocksToText([paragraph("a"), paragraph("b")])).to.equal("a\n\nb");
+    });
+  });
+
+  describe("section selectors", function () {
+    it("matches a section number and its subsections", function () {
+      expect(matchesSelector("3.1 Algorithm", "3.1")).to.equal(true);
+      expect(matchesSelector("3.1.1 Forward pass", "3.1")).to.equal(true);
+      expect(matchesSelector("3 Method", "3")).to.equal(true);
+      expect(matchesSelector("3.2 Other", "3.1")).to.equal(false);
+    });
+
+    it("does not let a numeric selector match a different section that contains it", function () {
+      // Substring matching made "3.1" match "2.3.1 Forward pass", a section from
+      // a different chapter. Numeric selectors align with the leading number.
+      expect(matchesSelector("2.3.1 Forward pass", "3.1")).to.equal(false);
+      expect(matchesSelector("12.1 Later", "2.1")).to.equal(false);
+    });
+
+    it("matches words anywhere in a title, case-insensitively", function () {
+      expect(matchesSelector("2 Background", "background")).to.equal(true);
+      expect(matchesSelector("Related Work", "related")).to.equal(true);
+      expect(matchesSelector("Conclusion", "background")).to.equal(false);
+    });
+
+    it("ignores an empty selector", function () {
+      expect(matchesSelector("Anything", "   ")).to.equal(false);
     });
   });
 
