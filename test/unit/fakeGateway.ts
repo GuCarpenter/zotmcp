@@ -5,6 +5,7 @@
 
 import type {
   EndpointConstructor,
+  SdtReader,
   SearchHandle,
   ZoteroGateway,
 } from "../../src/services/zoteroGateway";
@@ -62,6 +63,8 @@ export class FakeGateway implements ZoteroGateway {
   public fullTextSearchable = true;
   public cachePath: string | null = "/tmp/zotero-ft-cache";
   public cacheText = "";
+  public sdtReader: SdtReader | null = null;
+  public pdfText: { text?: string; pageChars?: number[] } | null = null;
 
   /** Conditions from the most recent search. */
   public get lastSearch(): RecordedCondition[] {
@@ -158,6 +161,16 @@ export class FakeGateway implements ZoteroGateway {
 
   public async readTextFile(_path: string): Promise<string> {
     return this.cacheText;
+  }
+
+  public async getSdtReader(_itemID: number): Promise<SdtReader | null> {
+    return this.sdtReader;
+  }
+
+  public async getPdfFullText(
+    _itemID: number,
+  ): Promise<{ text?: string; pageChars?: number[] } | null> {
+    return this.pdfText;
   }
 
   public async getCollectionByKey(

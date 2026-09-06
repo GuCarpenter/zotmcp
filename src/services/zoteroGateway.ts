@@ -48,6 +48,19 @@ export interface ZoteroGateway {
   readTextFile(path: string, maxLength?: number): Promise<string>;
 
   /**
+   * Zotero 10's Structured Document Text pack for a PDF, EPUB or snapshot
+   * attachment: typed blocks, a page catalogue and an outline, cached on disk and
+   * invalidated by source hash. Null when unavailable for this attachment.
+   */
+  getSdtReader(itemID: number): Promise<SdtReader | null>;
+
+  /** Raw PDF text extraction, the fallback when no SDT pack can be built. */
+  getPdfFullText(
+    itemID: number,
+    maxPages?: number,
+  ): Promise<{ text?: string; pageChars?: number[] } | null>;
+
+  /**
    * Runs `fn` inside a Zotero DB transaction. Multi-save operations rely on this
    * for atomicity — notably bidirectional related-item links, where a failure on
    * the second side must roll back the first (spec W-9).
@@ -97,6 +110,38 @@ export type EndpointConstructor = new () => ZotmcpServer.Endpoint;
 export interface SearchHandle {
   addCondition(condition: string, operator: string, value?: string): void;
   search(): Promise<number[]>;
+}
+
+/** A node in an SDT pack: either a text leaf or a block with children. */
+export interface SdtNode {
+  type?: string;
+  text?: string;
+  content?: SdtNode[];
+  anchor?: { pageIndex?: number };
+}
+
+export interface SdtOutlineItem {
+  title?: string;
+  /** Path to the block the entry points at; the first element is block index. */
+  ref?: number[];
+  target?: { position?: { pageIndex?: number } };
+  items?: SdtOutlineItem[];
+  children?: SdtOutlineItem[];
+}
+
+export interface SdtCatalog {
+  pages?: { label?: string; contentRange?: unknown }[];
+  outline?: SdtOutlineItem[];
+  pageMappingType?: string;
+}
+
+/** Subset of Zotero's SDT pack reader that this plugin relies on. */
+export interface SdtReader {
+  getMetadata(): Promise<Record<string, unknown>>;
+  getCatalog(): Promise<SdtCatalog>;
+  getTopLevelBlockCount(): number;
+  getBlocks(startBlock: number, endBlock: number): Promise<SdtNode[]>;
+  getPageBlocks(pageIndex: number): Promise<SdtNode[]>;
 }
 
 export class RealZoteroGateway implements ZoteroGateway {
@@ -191,6 +236,52 @@ export class RealZoteroGateway implements ZoteroGateway {
       "utf-8",
       maxLength,
     ) as Promise<string>;
+  }
+
+  public async getSdtReader(itemID: number): Promise<SdtReader | null> {
+    try {
+      const sdt = (
+        Zotero as unknown as {
+          SDT?: {
+            getReader(
+              itemID: number,
+              options?: Record<string, unknown>,
+            ): Promise<SdtReader | null>;
+          };
+        }
+      ).SDT;
+      if (!sdt) return null;
+      // Always a user-initiated read, so it should not queue behind background
+      // indexing work.
+      return await sdt.getReader(itemID, { isPriority: true });
+    } catch (e) {
+      this.log("WARN SDT reader unavailable", itemID, e);
+      return null;
+    }
+  }
+
+  public async getPdfFullText(
+    itemID: number,
+    maxPages?: number,
+  ): Promise<{ text?: string; pageChars?: number[] } | null> {
+    try {
+      const worker = (
+        Zotero as unknown as {
+          PDFWorker?: {
+            getFullText(
+              itemID: number,
+              maxPages?: number | null,
+              isPriority?: boolean,
+            ): Promise<{ text?: string; pageChars?: number[] }>;
+          };
+        }
+      ).PDFWorker;
+      if (!worker) return null;
+      return await worker.getFullText(itemID, maxPages ?? null, true);
+    } catch (e) {
+      this.log("WARN PDF text extraction failed", itemID, e);
+      return null;
+    }
   }
 
   public async getCollectionByKey(
