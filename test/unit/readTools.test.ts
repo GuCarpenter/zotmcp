@@ -331,4 +331,69 @@ describe("read tools", function () {
       expect(error.message).to.include("journalArticle");
     });
   });
+
+  describe("reader_read", function () {
+    it("returns closed status when no reader is active", async function () {
+      const payload = parse(await call("reader_read", {}));
+      expect(payload.open).to.equal(false);
+      expect(payload.message).to.include("No reader is currently open");
+    });
+
+    it("returns reader details, location and selection for active reader", async function () {
+      const item = gateway.addItem({
+        key: "ATTC1234",
+        id: 100,
+        itemType: "attachment",
+        attachmentContentType: "application/pdf",
+      });
+
+      gateway.activeReader = {
+        itemID: item.id,
+        title: "Test PDF Document",
+        type: "pdf",
+        state: { pageIndex: 2, scale: "auto" },
+        pageLabel: "3",
+        totalPages: 25,
+        selection: {
+          type: "text",
+          text: "gradient descent optimization",
+          pageIndex: 2,
+          pageLabel: "3",
+        },
+      };
+
+      const payload = parse(await call("reader_read", {}));
+      expect(payload.open).to.equal(true);
+      expect(payload.reader.attachmentKey).to.equal("ATTC1234");
+      expect(payload.reader.type).to.equal("pdf");
+      expect(payload.location.pageIndex).to.equal(2);
+      expect(payload.location.pageNumber).to.equal(3);
+      expect(payload.location.pageLabel).to.equal("3");
+      expect(payload.location.totalPages).to.equal(25);
+      expect(payload.selection.text).to.equal("gradient descent optimization");
+    });
+
+    it("accepts attachmentKey parameter", async function () {
+      const item = gateway.addItem({
+        key: "ATTC5678",
+        id: 200,
+        itemType: "attachment",
+      });
+
+      gateway.openReaders = [
+        {
+          itemID: item.id,
+          title: "Requested Document",
+          type: "pdf",
+          state: { pageIndex: 0 },
+        },
+      ];
+
+      const payload = parse(
+        await call("reader_read", { attachmentKey: "ATTC5678" }),
+      );
+      expect(payload.open).to.equal(true);
+      expect(payload.reader.attachmentKey).to.equal("ATTC5678");
+    });
+  });
 });

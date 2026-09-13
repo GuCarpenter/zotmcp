@@ -77,12 +77,12 @@ describe("zotmcp integration", function () {
   });
 
   describe("protocol", function () {
-    it("initializes and lists exactly eleven tools", async function () {
+    it("initializes and lists exactly twelve tools", async function () {
       const init = await rpc("initialize", { protocolVersion: "2025-06-18" });
       expect(init.result.protocolVersion).to.equal("2025-06-18");
 
       const list = await rpc("tools/list");
-      expect(list.result.tools).to.have.length(11);
+      expect(list.result.tools).to.have.length(12);
     });
 
     it("serves a tool call with no prior initialize", async function () {

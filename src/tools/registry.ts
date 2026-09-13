@@ -15,6 +15,7 @@ import type {
   ImportService,
 } from "../services/libraryWriteServices";
 import type { NoteService } from "../services/noteService";
+import type { ReaderService } from "../services/readerService";
 import type { ReadService } from "../services/readService";
 import type { SearchService } from "../services/searchService";
 import type { ScriptService } from "../services/scriptService";
@@ -38,6 +39,7 @@ export interface ToolContext {
   deletes: DeleteService;
   attachments: AttachmentService;
   scripts: ScriptService;
+  reader: ReaderService;
 }
 
 export interface ToolTextContent {

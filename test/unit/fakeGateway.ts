@@ -4,6 +4,7 @@
  */
 
 import type {
+  ActiveReaderDetails,
   EndpointConstructor,
   SdtReader,
   SearchHandle,
@@ -120,6 +121,8 @@ export class FakeGateway implements ZoteroGateway {
   public cacheText = "";
   public sdtReader: SdtReader | null = null;
   public pdfText: { text?: string; pageChars?: number[] } | null = null;
+  public activeReader: ActiveReaderDetails | null = null;
+  public openReaders: ActiveReaderDetails[] = [];
 
   /** Conditions from the most recent search. */
   public get lastSearch(): RecordedCondition[] {
@@ -501,6 +504,25 @@ export class FakeGateway implements ZoteroGateway {
 
   public log(...args: unknown[]): void {
     this.logs.push(args);
+  }
+
+  public getActiveReader(
+    attachmentItemID?: number,
+  ): ActiveReaderDetails | null {
+    if (attachmentItemID !== undefined) {
+      if (this.activeReader && this.activeReader.itemID === attachmentItemID) {
+        return this.activeReader;
+      }
+      return (
+        this.openReaders.find((r) => r.itemID === attachmentItemID) ?? null
+      );
+    }
+    return this.activeReader ?? this.openReaders[0] ?? null;
+  }
+
+  public getOpenReaders(): ActiveReaderDetails[] {
+    if (this.openReaders.length) return this.openReaders;
+    return this.activeReader ? [this.activeReader] : [];
   }
 }
 

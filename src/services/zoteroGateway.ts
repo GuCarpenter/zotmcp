@@ -197,6 +197,46 @@ export interface ZoteroGateway {
   showPopup(title: string, body: string, isError: boolean): void;
 
   log(...args: unknown[]): void;
+
+  /** Inspects the currently active reader or a reader for the given attachment item ID. */
+  getActiveReader(attachmentItemID?: number): ActiveReaderDetails | null;
+
+  /** Lists all currently open readers in tabs or windows. */
+  getOpenReaders(): ActiveReaderDetails[];
+}
+
+export interface ActiveReaderDetails {
+  readerID?: string;
+  tabID?: string;
+  windowID?: string;
+  itemID: number;
+  type: "pdf" | "epub" | "snapshot" | string;
+  title: string;
+  readOnly?: boolean;
+  state?: {
+    pageIndex?: number;
+    cfi?: string;
+    scrollYPercent?: number;
+    scrollXPercent?: number;
+    scale?: string | number;
+    top?: number;
+    left?: number;
+    scrollMode?: number;
+    spreadMode?: number;
+  };
+  selection?: {
+    type: "text" | "annotation";
+    text: string;
+    position?: Record<string, unknown>;
+    pageIndex?: number;
+    pageLabel?: string;
+    annotationKey?: string;
+    annotationType?: string;
+    comment?: string;
+    color?: string;
+  } | null;
+  pageLabel?: string;
+  totalPages?: number;
 }
 
 export type EndpointConstructor = new () => ZotmcpServer.Endpoint;
@@ -795,5 +835,312 @@ export class RealZoteroGateway implements ZoteroGateway {
     const value = Zotero.Prefs.get("httpServer.enabled");
     // Zotero ships the connector server enabled and the pref may be unset.
     return value === undefined ? true : Boolean(value);
+  }
+
+  public getOpenReaders(): ActiveReaderDetails[] {
+    try {
+      const zoteroAny = Zotero as unknown as {
+        Reader?: { _readers?: unknown[] };
+      };
+      if (!Array.isArray(zoteroAny.Reader?._readers)) return [];
+      const readers = zoteroAny.Reader._readers as Record<string, unknown>[];
+      return readers
+        .filter((r) => r && !r._isTabClosed && !r._isUninitialized)
+        .map((r) => this.extractReaderDetails(r))
+        .filter((r): r is ActiveReaderDetails => r !== null);
+    } catch (e) {
+      this.log("WARN failed to get open readers", e);
+      return [];
+    }
+  }
+
+  public getActiveReader(
+    attachmentItemID?: number,
+  ): ActiveReaderDetails | null {
+    try {
+      const zoteroAny = Zotero as unknown as {
+        Reader?: {
+          _readers?: unknown[];
+          getByTabID?(tabID: string): unknown;
+        };
+        getMainWindow?(): {
+          Zotero_Tabs?: { selectedID?: string };
+        };
+      };
+      if (!Array.isArray(zoteroAny.Reader?._readers)) return null;
+      const readers = zoteroAny.Reader._readers as Record<string, unknown>[];
+      const openReaders = readers.filter(
+        (r) => r && !r._isTabClosed && !r._isUninitialized,
+      );
+      if (!openReaders.length) return null;
+
+      if (attachmentItemID !== undefined) {
+        const found = openReaders.find((r) => r.itemID === attachmentItemID);
+        return found ? this.extractReaderDetails(found) : null;
+      }
+
+      // 1. Check if the most recent active window is a standalone reader window
+      try {
+        const services =
+          typeof Services !== "undefined"
+            ? (Services as unknown as {
+                wm?: { getMostRecentWindow(type: string | null): unknown };
+              })
+            : null;
+        const win = services?.wm?.getMostRecentWindow(null) as
+          { reader?: Record<string, unknown> } | undefined;
+        if (
+          win?.reader &&
+          !win.reader._isTabClosed &&
+          !win.reader._isUninitialized
+        ) {
+          return this.extractReaderDetails(win.reader);
+        }
+      } catch {
+        // Fall through
+      }
+
+      // 2. Check main window selected tab
+      try {
+        const mainWin = zoteroAny.getMainWindow?.();
+        const selectedID = mainWin?.Zotero_Tabs?.selectedID;
+        if (selectedID && zoteroAny.Reader?.getByTabID) {
+          const tabReader = zoteroAny.Reader.getByTabID(selectedID) as
+            Record<string, unknown> | undefined;
+          if (
+            tabReader &&
+            !tabReader._isTabClosed &&
+            !tabReader._isUninitialized
+          ) {
+            return this.extractReaderDetails(tabReader);
+          }
+        }
+      } catch {
+        // Fall through
+      }
+
+      // 3. Fallback to the first open reader
+      return this.extractReaderDetails(openReaders[0]);
+    } catch (e) {
+      this.log("WARN failed to get active reader", e);
+      return null;
+    }
+  }
+
+  private extractReaderDetails(
+    reader: Record<string, unknown>,
+  ): ActiveReaderDetails | null {
+    if (!reader || typeof reader.itemID !== "number") return null;
+
+    const internal = reader._internalReader as
+      Record<string, unknown> | undefined;
+    const primaryView = (internal?._primaryView ?? reader._primaryView) as
+      Record<string, unknown> | undefined;
+
+    const primaryState = ((internal?._state as Record<string, unknown>)
+      ?.primaryViewState ??
+      (reader._state as Record<string, unknown>)?.primaryViewState ??
+      reader._viewState ??
+      {}) as Record<string, unknown>;
+
+    let pageIndex =
+      typeof primaryState.pageIndex === "number"
+        ? primaryState.pageIndex
+        : undefined;
+
+    const pdfViewer = (
+      primaryView?._iframeWindow as
+        | { PDFViewerApplication?: { pdfViewer?: Record<string, unknown> } }
+        | undefined
+    )?.PDFViewerApplication?.pdfViewer;
+
+    const totalPages =
+      typeof pdfViewer?.pagesCount === "number"
+        ? pdfViewer.pagesCount
+        : undefined;
+
+    if (
+      pageIndex === undefined &&
+      typeof pdfViewer?.currentPageNumber === "number"
+    ) {
+      pageIndex = pdfViewer.currentPageNumber - 1;
+    }
+
+    let pageLabel: string | undefined = undefined;
+    if (pageIndex !== undefined) {
+      if (typeof primaryView?._getPageLabel === "function") {
+        try {
+          pageLabel = (
+            primaryView._getPageLabel as (idx: number, phys: boolean) => string
+          )(pageIndex, true);
+        } catch {
+          // Ignore
+        }
+      }
+      if (
+        !pageLabel &&
+        Array.isArray((internal?._state as Record<string, unknown>)?.pageLabels)
+      ) {
+        const labels = (internal?._state as { pageLabels: string[] })
+          .pageLabels;
+        if (labels[pageIndex]) pageLabel = String(labels[pageIndex]);
+      }
+    }
+
+    let selection: ActiveReaderDetails["selection"] = null;
+
+    // 1. Check selection popup
+    const internalState = internal?._state as
+      Record<string, unknown> | undefined;
+    const lastView = internal?._lastView as Record<string, unknown> | undefined;
+
+    const popup = (lastView?._selectionPopup ??
+      (internal?._lastViewPrimary
+        ? internalState?.primaryViewSelectionPopup
+        : internalState?.secondaryViewSelectionPopup) ??
+      internalState?.primaryViewSelectionPopup) as
+      { annotation?: Record<string, unknown> } | undefined;
+
+    if (popup?.annotation?.text) {
+      const ann = popup.annotation;
+      const annPos = ann.position as Record<string, unknown> | undefined;
+      selection = {
+        type: "text",
+        text: String(ann.text).trim(),
+        position: annPos,
+        pageIndex:
+          typeof annPos?.pageIndex === "number" ? annPos.pageIndex : pageIndex,
+        pageLabel:
+          typeof ann.pageLabel === "string" ? ann.pageLabel : pageLabel,
+      };
+    }
+
+    // 2. Check PDF selection ranges
+    if (
+      !selection &&
+      Array.isArray(primaryView?._selectionRanges) &&
+      primaryView._selectionRanges.length > 0
+    ) {
+      const ranges = (
+        primaryView._selectionRanges as Record<string, unknown>[]
+      ).filter((r) => !r.collapsed && r.text);
+      if (ranges.length > 0) {
+        const firstPos = ranges[0].position as
+          Record<string, unknown> | undefined;
+        selection = {
+          type: "text",
+          text: ranges
+            .map((r) => String(r.text))
+            .join(" ")
+            .trim(),
+          position: firstPos,
+          pageIndex:
+            typeof ranges[0].pageIndex === "number"
+              ? ranges[0].pageIndex
+              : typeof firstPos?.pageIndex === "number"
+                ? firstPos.pageIndex
+                : pageIndex,
+          pageLabel,
+        };
+      }
+    }
+
+    // 3. Check window / iframe DOM selection
+    if (!selection) {
+      try {
+        const iframeWin = primaryView?._iframeWindow as
+          | {
+              getSelection?: () => { isCollapsed: boolean; toString(): string };
+            }
+          | undefined;
+        const winSel = iframeWin?.getSelection?.();
+        const selText =
+          winSel && !winSel.isCollapsed ? winSel.toString().trim() : "";
+        if (selText) {
+          selection = {
+            type: "text",
+            text: selText,
+            pageIndex,
+            pageLabel,
+          };
+        }
+      } catch {
+        // Ignore
+      }
+    }
+
+    // 4. Check selected annotation IDs
+    if (!selection && Array.isArray(internalState?.selectedAnnotationIDs)) {
+      const selectedIDs = internalState.selectedAnnotationIDs as unknown[];
+      if (selectedIDs.length > 0 && Array.isArray(internalState?.annotations)) {
+        const annId = selectedIDs[0];
+        const annotations = internalState.annotations as Record<
+          string,
+          unknown
+        >[];
+        const ann = annotations.find((a) => a.id === annId);
+        if (ann) {
+          const annPos = ann.position as Record<string, unknown> | undefined;
+          selection = {
+            type: "annotation",
+            text: String(ann.text ?? "").trim(),
+            position: annPos,
+            pageIndex:
+              typeof annPos?.pageIndex === "number"
+                ? annPos.pageIndex
+                : pageIndex,
+            pageLabel:
+              typeof ann.pageLabel === "string" ? ann.pageLabel : pageLabel,
+            annotationKey: typeof ann.id === "string" ? ann.id : undefined,
+            annotationType: typeof ann.type === "string" ? ann.type : undefined,
+            comment: typeof ann.comment === "string" ? ann.comment : undefined,
+            color: typeof ann.color === "string" ? ann.color : undefined,
+          };
+        }
+      }
+    }
+
+    return {
+      readerID:
+        typeof reader._instanceID === "string" ? reader._instanceID : undefined,
+      tabID: typeof reader.tabID === "string" ? reader.tabID : undefined,
+      itemID: reader.itemID as number,
+      type: String(reader._type ?? reader.type ?? "pdf"),
+      title: String(reader._title ?? ""),
+      readOnly: Boolean(reader._readOnly || internalState?.readOnly),
+      state: {
+        pageIndex,
+        cfi:
+          typeof primaryState.cfi === "string" ? primaryState.cfi : undefined,
+        scrollYPercent:
+          typeof primaryState.scrollYPercent === "number"
+            ? primaryState.scrollYPercent
+            : undefined,
+        scrollXPercent:
+          typeof primaryState.scrollXPercent === "number"
+            ? primaryState.scrollXPercent
+            : undefined,
+        scale:
+          typeof primaryState.scale === "string" ||
+          typeof primaryState.scale === "number"
+            ? primaryState.scale
+            : undefined,
+        top:
+          typeof primaryState.top === "number" ? primaryState.top : undefined,
+        left:
+          typeof primaryState.left === "number" ? primaryState.left : undefined,
+        scrollMode:
+          typeof primaryState.scrollMode === "number"
+            ? primaryState.scrollMode
+            : undefined,
+        spreadMode:
+          typeof primaryState.spreadMode === "number"
+            ? primaryState.spreadMode
+            : undefined,
+      },
+      selection,
+      pageLabel,
+      totalPages,
+    };
   }
 }

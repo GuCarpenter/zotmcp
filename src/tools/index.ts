@@ -12,6 +12,7 @@ import {
   librarySearch,
   noteWrite,
   paperRead,
+  readerRead,
 } from "./readHandlers";
 import {
   attachmentUpdate,
@@ -28,6 +29,7 @@ export const TOOL_NAMES = [
   "library_search",
   "library_read",
   "paper_read",
+  "reader_read",
   "library_import",
   "library_update",
   "collection_update",
@@ -169,6 +171,35 @@ const specs: ToolSpec[] = [
       ["attachmentKey"],
     ),
     handler: paperRead,
+  },
+  {
+    name: "reader_read",
+    description:
+      "Inspect the open reader in Zotero. Returns current reader details " +
+      "(attachment item, type, title), page or location, active text or " +
+      "annotation selection, and surrounding text context. Uses the active " +
+      "reader tab or window by default, or an explicit attachmentKey.",
+    mutability: "read",
+    inputSchema: OBJECT_SCHEMA({
+      attachmentKey: {
+        ...ITEM_KEY,
+        description:
+          "Optional 8-character Zotero item key for an open attachment. " +
+          "If omitted, uses the currently active reader.",
+      },
+      includeContext: {
+        type: "boolean",
+        description:
+          "Whether to include surrounding text context for the selection " +
+          "or current page. Default true.",
+      },
+      contextChars: {
+        type: "number",
+        description:
+          "Maximum character budget for surrounding text context. Default 600.",
+      },
+    }),
+    handler: readerRead,
   },
   {
     name: "library_import",

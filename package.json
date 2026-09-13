@@ -1,7 +1,7 @@
 {
   "name": "zotmcp",
   "type": "module",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "MCP server embedded in Zotero: search, read, annotate and manage My Library from any MCP client",
   "config": {
     "addonName": "Zotmcp",

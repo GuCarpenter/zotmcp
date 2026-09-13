@@ -5,7 +5,7 @@ the [README](../README.md).
 
 ## What it is
 
-A Zotero 10 plugin that serves eleven MCP tools and three resources over Zotero's
+A Zotero 10 plugin that serves twelve MCP tools and three resources over Zotero's
 own HTTP server, so any MCP client can search, read, annotate and manage
 My Library.
 
@@ -16,7 +16,7 @@ My Library.
 | Zotero plugin, not an external process | Uses Zotero's internal JS API directly: no web-API keys, no SQLite reading, no sync lag. The cost is that Zotero must be running.                                                                             |
 | Endpoint on Zotero's own HTTP server   | Zotero owns the socket, body reading, UTF-8 decoding and size limits. Nothing to reimplement, no second port, and Zotero 10's request hardening applies for free.                                             |
 | Stateless                              | Zotero's endpoint contract returns `[status, contentType, body]` with **no response headers**, so there is nowhere to put an `Mcp-Session-Id`. Statelessness is forced by the platform, not merely preferred. |
-| Eleven modal tools                     | The full surface is sent on every request, so it stays small: `paper_read mode:'…'` rather than four read tools. No toolset gating machinery needed.                                                          |
+| Twelve modal tools                     | The full surface is sent on every request, so it stays small: `paper_read mode:'…'` rather than four read tools. No toolset gating machinery needed.                                                          |
 | My Library only                        | Group libraries double every code path for no user this project has. Group keys are refused rather than silently mixed in.                                                                                    |
 | No semantic search                     | Would mean an embedding provider, a vector store, an index lifecycle, and a staleness problem. Zotero 10's FTS5 full-text index covers the actual need.                                                       |
 | Writes ungated                         | A deliberate choice: no confirmation step. Mitigated by loopback-only binding, Zotero 10 dropping browser-originated requests, and Zotero's native undo stack.                                                |
@@ -49,9 +49,9 @@ has no group branch at all, so a wrong-form deep link cannot be emitted.
 src/
   transport/     Zotero.Server endpoint, HTTP-server availability check
   protocol/      JSON-RPC framing, capabilities, method dispatch
-  tools/         eleven tool specs (schemas + descriptions) and their handlers
+  tools/         twelve tool specs (schemas + descriptions) and their handlers
   resources/     three MCP resources
-  services/      search, reading, annotations, notes, writes, script, undo, URIs
+  services/      search, reading, annotations, notes, writes, script, undo, URIs, reader
   services/zoteroGateway.ts   the only file referencing global Zotero
 ```
 
@@ -200,11 +200,11 @@ cost of holding the database for the script's run.
 
 ## Verification
 
-- 277 unit tests in plain Node against `FakeGateway`; no Zotero required.
+- 291 unit tests in plain Node against `FakeGateway`; no Zotero required.
 - 18 integration tests inside Zotero 10 via `zotero-plugin test`, against a
   scratch profile and data directory.
 - The full tool surface exercised over the live endpoint against a real library.
-- A test pins the exact eleven-tool surface, and another scans tool text for
+- A test pins the exact twelve-tool surface, and another scans tool text for
   out-of-scope vocabulary, so `tools/list` cannot drift from the code.
 
 Worth recording: every bug found in this project came from running against a real

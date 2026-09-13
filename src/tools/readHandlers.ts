@@ -305,3 +305,24 @@ export async function annotationWrite(
       );
   }
 }
+
+export async function readerRead(
+  args: Args,
+  ctx: ToolContext,
+): Promise<ToolResult> {
+  const attachmentKey = str(args, "attachmentKey");
+  const includeContext =
+    args.includeContext === undefined
+      ? undefined
+      : Boolean(args.includeContext);
+  const contextChars =
+    args.contextChars === undefined ? undefined : Number(args.contextChars);
+
+  const result = await ctx.reader.getOpenReader({
+    attachmentKey,
+    includeContext,
+    contextChars,
+  });
+
+  return jsonResult(result);
+}

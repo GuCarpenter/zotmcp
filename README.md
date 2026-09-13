@@ -50,23 +50,24 @@ tradeoff is that the database is held for the script's whole run.
 
 ## Tools
 
-Eleven modal tools, kept small so the whole surface is cheap to send on every
+Twelve modal tools, kept small so the whole surface is cheap to send on every
 request. `tools/list` is generated from the registry, so this list cannot drift
 from the code without failing a test.
 
-| Tool                | Purpose                                                                                                   |
-| ------------------- | --------------------------------------------------------------------------------------------------------- |
-| `library_search`    | keyword, field-condition, tag, citation-key, full-text and annotation search; collections and tags; trash |
-| `library_read`      | metadata, abstract, children, attachments, tags, notes, annotations                                       |
-| `paper_read`        | `fulltext`, `pages`, `sections` for PDF and EPUB                                                          |
-| `library_import`    | by identifier, from local files, or manual item creation                                                  |
-| `library_update`    | metadata, item tags, library-wide tag ops, reparent, related links; batchable                             |
-| `collection_update` | create, rename, move, delete, membership                                                                  |
-| `library_delete`    | trash, restore, merge duplicates                                                                          |
-| `attachment_update` | rename, relink, trash                                                                                     |
-| `note_write`        | create, update, append; Markdown in                                                                       |
-| `annotation_write`  | highlight by text or rects, area annotation, update, delete                                               |
-| `zotero_script`     | privileged JavaScript, `read` or `write`                                                                  |
+| Tool                | Purpose                                                                                                     |
+| ------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `library_search`    | keyword, field-condition, tag, citation-key, full-text and annotation search; collections and tags; trash   |
+| `library_read`      | metadata, abstract, children, attachments, tags, notes, annotations                                         |
+| `paper_read`        | `fulltext`, `pages`, `sections` for PDF and EPUB                                                            |
+| `reader_read`       | open reader state: attachment item, page/location, active text or annotation selection, surrounding context |
+| `library_import`    | by identifier, from local files, or manual item creation                                                    |
+| `library_update`    | metadata, item tags, library-wide tag ops, reparent, related links; batchable                               |
+| `collection_update` | create, rename, move, delete, membership                                                                    |
+| `library_delete`    | trash, restore, merge duplicates                                                                            |
+| `attachment_update` | rename, relink, trash                                                                                       |
+| `note_write`        | create, update, append; Markdown in                                                                         |
+| `annotation_write`  | highlight by text or rects, area annotation, update, delete                                                 |
+| `zotero_script`     | privileged JavaScript, `read` or `write`                                                                    |
 
 Plus three MCP resources: `zotero://collections`,
 `zotero://items/{itemKey}`, `zotero://collections/{collectionKey}/items`.
