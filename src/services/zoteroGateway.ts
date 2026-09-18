@@ -365,13 +365,26 @@ export interface SdtOutlineItem {
   title?: string;
   /** Path to the block the entry points at; the first element is block index. */
   ref?: number[];
+  /**
+   * How the entry entered the outline: `"native"` for the document's authored
+   * outline (what the reader's left panel shows), `"detected"` for headings the
+   * packer inferred heuristically. Absent on older packs.
+   */
+  source?: "native" | "detected" | string;
   target?: { position?: { pageIndex?: number } };
   items?: SdtOutlineItem[];
   children?: SdtOutlineItem[];
 }
 
 export interface SdtCatalog {
-  pages?: { label?: string; contentRange?: unknown }[];
+  pages?: {
+    label?: string;
+    /**
+     * Block span of the page as `[[startBlockIndex], [endBlockIndex]]`, the
+     * first element giving the page's opening top-level block.
+     */
+    contentRange?: number[][];
+  }[];
   outline?: SdtOutlineItem[];
   pageMappingType?: string;
 }

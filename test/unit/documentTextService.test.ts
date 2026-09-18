@@ -6,7 +6,9 @@ import {
   firstPageIndex,
   flattenOutline,
   matchesSelector,
+  pageBlockResolver,
   parsePageRange,
+  preferAuthoredOutline,
 } from "../../src/services/documentTextService";
 import type { SdtNode, SdtReader } from "../../src/services/zoteroGateway";
 import { FakeGateway } from "./fakeGateway";
@@ -171,8 +173,91 @@ describe("documentTextService", function () {
       expect(flat.map((f) => f.title)).to.deep.equal(["Chapter", "Part"]);
     });
 
-    it("drops entries with no block reference", function () {
+    it("drops entries with no block reference and no resolvable page", function () {
       expect(flattenOutline([{ title: "Dangling" }])).to.deep.equal([]);
+    });
+
+    it("keeps a page-anchored entry that has no block ref by resolving its page", function () {
+      // PDF outline entries such as "Fallacies and Pitfalls" carry only a page
+      // target. Without resolving the page they vanish from the outline.
+      const flat = flattenOutline(
+        [
+          { title: "Putting It All Together", ref: [10] },
+          {
+            title: "Fallacies and Pitfalls",
+            target: { position: { pageIndex: 5 } },
+          },
+          { title: "Concluding Remarks", ref: [30] },
+        ],
+        (pageIndex) => (pageIndex === 5 ? 20 : undefined),
+      );
+
+      expect(flat.map((f) => [f.title, f.blockIndex])).to.deep.equal([
+        ["Putting It All Together", 10],
+        ["Fallacies and Pitfalls", 20],
+        ["Concluding Remarks", 30],
+      ]);
+      expect(flat[1].pageIndex).to.equal(5);
+    });
+
+    it("still drops a page-anchored entry the resolver cannot place", function () {
+      expect(
+        flattenOutline(
+          [{ title: "Orphan", target: { position: { pageIndex: 9 } } }],
+          () => undefined,
+        ),
+      ).to.deep.equal([]);
+    });
+
+    it("builds a page resolver from the catalogue's contentRange", function () {
+      const resolve = pageBlockResolver({
+        pages: [
+          { contentRange: [[0], [4]] },
+          { contentRange: [[5], [9]] },
+          { contentRange: [[10], [14]] },
+        ],
+      });
+      expect(resolve(0)).to.equal(0);
+      expect(resolve(2)).to.equal(10);
+      expect(resolve(7)).to.equal(undefined);
+    });
+
+    it("carries the entry's source through the flattened outline", function () {
+      const flat = flattenOutline([
+        { title: "Chapter", ref: [0], source: "native" },
+        { title: "Stray heading", ref: [1], source: "detected" },
+      ]);
+      expect(flat.map((f) => [f.title, f.source])).to.deep.equal([
+        ["Chapter", "native"],
+        ["Stray heading", "detected"],
+      ]);
+    });
+  });
+
+  describe("preferring the authored outline", function () {
+    it("keeps only native entries when any authored entry exists", function () {
+      const kept = preferAuthoredOutline([
+        { title: "Real", source: "native" },
+        { title: "Guessed", source: "detected" },
+        { title: "Also real", source: "native" },
+      ]);
+      expect(kept.map((e) => e.title)).to.deep.equal(["Real", "Also real"]);
+    });
+
+    it("leaves a purely detected outline untouched as a fallback", function () {
+      const entries = [
+        { title: "Guessed 1", source: "detected" },
+        { title: "Guessed 2", source: "detected" },
+      ];
+      expect(preferAuthoredOutline(entries)).to.deep.equal(entries);
+    });
+
+    it("leaves an older sourceless outline untouched", function () {
+      const entries: { title: string; source?: string }[] = [
+        { title: "A" },
+        { title: "B" },
+      ];
+      expect(preferAuthoredOutline(entries)).to.deep.equal(entries);
     });
   });
 
@@ -389,6 +474,88 @@ describe("documentTextService", function () {
       expect(result.sections[0].startPage).to.equal(1);
       expect(result.sections[0].text).to.equal("intro body");
       expect(result.sections[1].text).to.equal("method body");
+    });
+
+    it("keeps an outline entry that is page-anchored with no block ref", async function () {
+      // Mirrors a PDF like "2.7 Fallacies and Pitfalls" that the pack anchors by
+      // page only. The page catalogue's contentRange places it in block order.
+      const pagedBlocks = [
+        heading("Putting It All Together", 0),
+        paragraph("together body", 0),
+        heading("Fallacies and Pitfalls", 1),
+        paragraph("fallacies body", 1),
+        heading("Concluding Remarks", 2),
+        paragraph("remarks body", 2),
+      ];
+      gateway.sdtReader = fakeReader(pagedBlocks, {
+        pages: [
+          { contentRange: [[0], [1]] },
+          { contentRange: [[2], [3]] },
+          { contentRange: [[4], [5]] },
+        ],
+        outline: [
+          { title: "Putting It All Together", ref: [0] },
+          {
+            title: "Fallacies and Pitfalls",
+            target: { position: { pageIndex: 1 } },
+          },
+          { title: "Concluding Remarks", ref: [4] },
+        ],
+      });
+
+      const result = await service.sections(attachment(gateway));
+
+      expect(result.source).to.equal("sdt-outline");
+      expect(result.sections.map((s) => s.title)).to.deep.equal([
+        "Putting It All Together",
+        "Fallacies and Pitfalls",
+        "Concluding Remarks",
+      ]);
+      expect(result.sections[1].startPage).to.equal(2);
+      expect(result.sections[1].text).to.equal("fallacies body");
+    });
+
+    it("drops heuristically detected entries when the outline is authored", async function () {
+      // A pack merges the authored outline with detected headings. Only the
+      // authored ones are the real table of contents.
+      gateway.sdtReader = fakeReader(blocks, {
+        pages: [{}, {}],
+        outline: [
+          { title: "Introduction", ref: [0], source: "native" },
+          {
+            title: "A bold line mistaken for a heading",
+            ref: [1],
+            source: "detected",
+          },
+          { title: "Method", ref: [2], source: "native" },
+        ],
+      });
+
+      const result = await service.sections(attachment(gateway));
+
+      expect(result.source).to.equal("sdt-outline");
+      expect(result.sections.map((s) => s.title)).to.deep.equal([
+        "Introduction",
+        "Method",
+      ]);
+    });
+
+    it("keeps detected entries when the pack has no authored outline", async function () {
+      gateway.sdtReader = fakeReader(blocks, {
+        pages: [{}, {}],
+        outline: [
+          { title: "Introduction", ref: [0], source: "detected" },
+          { title: "Method", ref: [2], source: "detected" },
+        ],
+      });
+
+      const result = await service.sections(attachment(gateway));
+
+      expect(result.source).to.equal("sdt-outline");
+      expect(result.sections.map((s) => s.title)).to.deep.equal([
+        "Introduction",
+        "Method",
+      ]);
     });
 
     it("derives sections from heading blocks when there is no outline", async function () {

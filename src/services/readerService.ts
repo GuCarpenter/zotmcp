@@ -11,6 +11,8 @@ import {
   blocksToText,
   firstPageIndex,
   flattenOutline,
+  pageBlockResolver,
+  preferAuthoredOutline,
 } from "./documentTextService";
 import type { ItemResolver } from "./itemResolver";
 import { buildItemUris } from "./uriService";
@@ -269,6 +271,7 @@ export class ReaderService {
             sdt,
             catalog.outline,
             targetPageIndex,
+            pageBlockResolver(catalog),
           );
         }
       } catch {
@@ -400,8 +403,11 @@ export class ReaderService {
     sdt: { getBlocks(start: number, end: number): Promise<SdtNode[]> },
     outline: Parameters<typeof flattenOutline>[0],
     pageIndex: number,
+    resolvePageBlock?: Parameters<typeof flattenOutline>[1],
   ): Promise<{ title: string; level?: number } | undefined> {
-    const flat = flattenOutline(outline);
+    const flat = preferAuthoredOutline(
+      flattenOutline(outline, resolvePageBlock),
+    );
     if (!flat.length) return undefined;
 
     // Resolve pageIndex for flat entries if missing

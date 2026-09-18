@@ -21,6 +21,7 @@ import {
   UnsupportedAttachmentError,
 } from "../errors";
 import type {
+  SdtCatalog,
   SdtNode,
   SdtOutlineItem,
   SdtReader,
@@ -177,34 +178,103 @@ export function firstPageIndex(node: SdtNode): number | undefined {
   return undefined;
 }
 
-/** Flattens an SDT outline, keeping nesting depth as the section level. */
+/**
+ * Resolves a 0-based page index to the index of the first top-level block on
+ * that page, so an outline entry that points at a page rather than a block can
+ * still be placed in block order.
+ */
+export type PageBlockResolver = (pageIndex: number) => number | undefined;
+
+/**
+ * Flattens an SDT outline, keeping nesting depth as the section level.
+ *
+ * PDF outline entries do not all carry a block `ref` — sections like
+ * "Fallacies and Pitfalls" are frequently anchored only by a page target. Such
+ * an entry is kept when a `resolvePageBlock` mapping can turn its page into a
+ * block index; without one it would silently vanish from the outline, which is
+ * the reader's own left-panel behaviour that this mirrors. An entry with
+ * neither a block ref nor a resolvable page is dropped.
+ */
 export function flattenOutline(
   items: SdtOutlineItem[] | undefined,
+  resolvePageBlock?: PageBlockResolver,
   level = 1,
-): { title: string; blockIndex: number; pageIndex?: number; level: number }[] {
+): {
+  title: string;
+  blockIndex: number;
+  pageIndex?: number;
+  level: number;
+  source?: string;
+}[] {
   const flat: {
     title: string;
     blockIndex: number;
     pageIndex?: number;
     level: number;
+    source?: string;
   }[] = [];
 
   for (const item of items ?? []) {
-    const blockIndex = Array.isArray(item.ref) ? item.ref[0] : undefined;
+    const pageIndex = item.target?.position?.pageIndex;
+    let blockIndex = Array.isArray(item.ref) ? item.ref[0] : undefined;
+    if (
+      (typeof blockIndex !== "number" || !Number.isInteger(blockIndex)) &&
+      typeof pageIndex === "number" &&
+      resolvePageBlock
+    ) {
+      blockIndex = resolvePageBlock(pageIndex);
+    }
     if (typeof blockIndex === "number" && Number.isInteger(blockIndex)) {
       flat.push({
         title: (item.title ?? "").trim() || "(untitled section)",
         blockIndex,
-        pageIndex: item.target?.position?.pageIndex,
+        pageIndex,
         level,
+        ...(item.source ? { source: item.source } : {}),
       });
     }
     // PDF and EPUB packs nest under different keys, so both are accepted.
     const children = item.items ?? item.children;
-    if (children?.length) flat.push(...flattenOutline(children, level + 1));
+    if (children?.length) {
+      flat.push(...flattenOutline(children, resolvePageBlock, level + 1));
+    }
   }
 
   return flat.sort((a, b) => a.blockIndex - b.blockIndex);
+}
+
+/**
+ * Narrows a flattened outline to the document's authored ("native") entries —
+ * the same set the reader's left panel shows.
+ *
+ * An SDT pack merges the authored outline with headings it detects
+ * heuristically (`source: "detected"`), which pollutes the section list with
+ * entries that are not part of the real table of contents. When any authored
+ * entry is present those are the truth and the detected ones are dropped. A
+ * pack with no authored outline at all (or an older pack that predates the
+ * `source` field) is left untouched, so detection remains a useful fallback.
+ */
+export function preferAuthoredOutline<T extends { source?: string }>(
+  entries: T[],
+): T[] {
+  const authored = entries.filter((entry) => entry.source === "native");
+  return authored.length ? authored : entries;
+}
+
+/**
+ * Builds a page→first-block resolver from an SDT catalogue's page list. Each
+ * page carries a `contentRange` of `[[startBlock], [endBlock]]`, so the first
+ * element's first entry is the page's opening top-level block.
+ */
+export function pageBlockResolver(catalog: SdtCatalog): PageBlockResolver {
+  return (pageIndex: number): number | undefined => {
+    const range = catalog.pages?.[pageIndex]?.contentRange;
+    const start = Array.isArray(range) ? range[0] : undefined;
+    const blockIndex = Array.isArray(start) ? start[0] : undefined;
+    return typeof blockIndex === "number" && Number.isInteger(blockIndex)
+      ? blockIndex
+      : undefined;
+  };
 }
 
 export function parsePageRange(spec: unknown, totalPages: number): number[] {
@@ -411,7 +481,9 @@ export class DocumentTextService {
     const catalog = await reader.getCatalog();
     const total = reader.getTopLevelBlockCount();
 
-    const outline = flattenOutline(catalog.outline);
+    const outline = preferAuthoredOutline(
+      flattenOutline(catalog.outline, pageBlockResolver(catalog)),
+    );
     if (outline.length) {
       return this.buildSections(
         reader,
