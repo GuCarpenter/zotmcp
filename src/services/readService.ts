@@ -6,6 +6,7 @@
  * one place.
  */
 
+import { noteHtmlToMarkdown } from "./noteService";
 import { buildItemUris, type ItemUris } from "./uriService";
 import type { ZoteroGateway } from "./zoteroGateway";
 
@@ -66,6 +67,7 @@ export interface NoteRecord {
   parentKey?: string;
   title: string;
   text: string;
+  markdown: string;
   uri: ItemUris;
 }
 
@@ -153,7 +155,9 @@ export class ReadService {
       const childAttachments = wanted.has("attachments")
         ? attachments
         : await this.gateway.getItemsByID(item.getAttachments());
-      const childNotes = await this.gateway.getItemsByID(item.getNotes());
+      const childNotes = isNoteItem(item)
+        ? []
+        : await this.gateway.getItemsByID(item.getNotes());
       result.children = {
         attachments: childAttachments.map((child) => this.summarize(child)),
         notes: childNotes.map((child) => this.summarize(child)),
@@ -161,8 +165,14 @@ export class ReadService {
     }
 
     if (wanted.has("notes")) {
-      const notes = await this.gateway.getItemsByID(item.getNotes());
-      result.notes = notes.map((note) => this.noteRecord(note, item.key));
+      // A note item has no child notes; return the note itself so a caller can
+      // read a standalone note by its own key rather than hitting getNotes().
+      if (isNoteItem(item)) {
+        result.notes = [this.noteRecord(item)];
+      } else {
+        const notes = await this.gateway.getItemsByID(item.getNotes());
+        result.notes = notes.map((note) => this.noteRecord(note, item.key));
+      }
     }
 
     if (wanted.has("annotations")) {
@@ -220,6 +230,7 @@ export class ReadService {
       ...(parentKey ? { parentKey } : {}),
       title: safeField(note, "title") || firstLine(html) || "(untitled note)",
       text: htmlToText(html),
+      markdown: noteHtmlToMarkdown(html),
       uri: buildItemUris({ key: note.key, isAttachment: false }),
     };
   }
@@ -270,6 +281,10 @@ function safeField(item: Zotero.Item, field: string): string {
     // Asking a type for a field it does not have is normal, not an error.
     return "";
   }
+}
+
+function isNoteItem(item: Zotero.Item): boolean {
+  return String(item.itemType) === "note" || Boolean(item.isNote?.());
 }
 
 function safeNote(item: Zotero.Item): string {

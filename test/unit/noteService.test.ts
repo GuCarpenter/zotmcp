@@ -2,6 +2,7 @@ import { expect } from "chai";
 import { ItemResolver } from "../../src/services/itemResolver";
 import {
   markdownToNoteHtml,
+  noteHtmlToMarkdown,
   NoteService,
 } from "../../src/services/noteService";
 import { FakeGateway } from "./fakeGateway";
@@ -33,6 +34,70 @@ describe("noteService", function () {
     it("supports GitHub-flavoured tables", function () {
       const html = markdownToNoteHtml("| a | b |\n| - | - |\n| 1 | 2 |");
       expect(html).to.include("<table>");
+    });
+  });
+
+  describe("noteHtmlToMarkdown", function () {
+    it("round-trips headings, emphasis and lists", function () {
+      const markdown = "# Title\n\n**bold** and *italic*\n\n- a\n- b";
+      expect(noteHtmlToMarkdown(markdownToNoteHtml(markdown))).to.equal(
+        markdown,
+      );
+    });
+
+    it("strips Zotero's schema wrapper div", function () {
+      const html =
+        '<div data-schema-version="9"><h1>Key idea</h1><p>body</p></div>';
+      expect(noteHtmlToMarkdown(html)).to.equal("# Key idea\n\nbody");
+    });
+
+    it("renders nested lists with indentation", function () {
+      const html =
+        "<ul><li>a<ul><li>a1</li><li>a2</li></ul></li><li>b</li></ul>";
+      expect(noteHtmlToMarkdown(html)).to.equal("- a\n  - a1\n  - a2\n- b");
+    });
+
+    it("renders ordered lists, links and inline code", function () {
+      const html =
+        '<ol><li>see <a href="https://x.test">x</a></li><li>run <code>go</code></li></ol>';
+      expect(noteHtmlToMarkdown(html)).to.equal(
+        "1. see [x](https://x.test)\n2. run `go`",
+      );
+    });
+
+    it("renders blockquotes and fenced code blocks", function () {
+      expect(
+        noteHtmlToMarkdown("<blockquote><p>quoted</p></blockquote>"),
+      ).to.equal("> quoted");
+      expect(
+        noteHtmlToMarkdown("<pre><code>a = 1\nb = 2</code></pre>"),
+      ).to.equal("```\na = 1\nb = 2\n```");
+    });
+
+    it("renders a GitHub-flavoured table", function () {
+      const html =
+        "<table><thead><tr><th>a</th><th>b</th></tr></thead><tbody><tr><td>1</td><td>2</td></tr></tbody></table>";
+      expect(noteHtmlToMarkdown(html)).to.equal(
+        "| a | b |\n| --- | --- |\n| 1 | 2 |",
+      );
+    });
+
+    it("returns an empty string for empty input", function () {
+      expect(noteHtmlToMarkdown("")).to.equal("");
+      expect(noteHtmlToMarkdown(undefined as never)).to.equal("");
+    });
+
+    it("links an embedded image by its attachment key", function () {
+      const html =
+        '<p><img alt="../_images/allreduce.png" data-attachment-key="DRZXJMJN" width="650" height="200"></p>';
+      expect(noteHtmlToMarkdown(html)).to.equal(
+        "![../_images/allreduce.png](zotero://select/library/items/DRZXJMJN)",
+      );
+    });
+
+    it("keeps a plain image src when there is no attachment key", function () {
+      const html = '<p><img src="https://x.test/a.png" alt="a"></p>';
+      expect(noteHtmlToMarkdown(html)).to.equal("![a](https://x.test/a.png)");
     });
   });
 

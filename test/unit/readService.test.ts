@@ -199,7 +199,29 @@ describe("readService", function () {
 
       expect(record.title).to.equal("Key idea");
       expect(record.text).to.equal("Key idea\nAttention scales.");
+      expect(record.markdown).to.equal("# Key idea\n\nAttention scales.");
       expect(record.parentKey).to.equal("ABCD1234");
+    });
+
+    it("reads a standalone note by its own key without hitting getNotes", async function () {
+      const note = fakeItem({
+        key: "NOTE0001",
+        itemType: "note",
+        note: "<h2>Data Parallel</h2><p>Split the batch.</p>",
+      });
+      note.isNote = () => true;
+      note.getNotes = () => {
+        throw new Error("getNotes() cannot be called on items of type 'note'");
+      };
+
+      const result = await service.read(note, ["notes"]);
+
+      expect(result.notes).to.have.length(1);
+      expect(result.notes?.[0].key).to.equal("NOTE0001");
+      expect(result.notes?.[0].markdown).to.equal(
+        "## Data Parallel\n\nSplit the batch.",
+      );
+      expect(result.notes?.[0].parentKey).to.equal(undefined);
     });
   });
 

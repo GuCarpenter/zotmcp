@@ -101,7 +101,9 @@ const specs: ToolSpec[] = [
     description:
       "Read one item's stored state: any subset of metadata, abstract, child " +
       "items, attachments (content type, file path, zotero:// links), tags, " +
-      "notes and annotations.",
+      "notes and annotations. The 'notes' section returns each note as both " +
+      "plain text and Markdown; pass a note's own key with sections ['notes'] " +
+      "to read that standalone note back as Markdown.",
     mutability: "read",
     inputSchema: OBJECT_SCHEMA(
       {
