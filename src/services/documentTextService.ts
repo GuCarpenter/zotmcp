@@ -147,6 +147,20 @@ export function blocksToText(blocks: SdtNode[]): string {
 }
 
 /**
+ * Flattens a block to its text leaves in reading order — the nodes that carry
+ * `text` and the `anchor.textMap` glyph geometry. Used to map a quoted string
+ * to character-exact rectangles.
+ */
+export function collectTextLeaves(node: SdtNode): SdtNode[] {
+  if (typeof node.text === "string") return [node];
+  const leaves: SdtNode[] = [];
+  for (const child of node.content ?? []) {
+    leaves.push(...collectTextLeaves(child));
+  }
+  return leaves;
+}
+
+/**
  * A block's page comes from its anchor's first page rect, whose leading element
  * is the 0-based page index (`[pageIndex, x1, y1, x2, y2]`). Blocks without an
  * anchor of their own inherit one from their children.
@@ -268,6 +282,33 @@ export class DocumentTextService {
 
   public isPdf(attachment: Zotero.Item): boolean {
     return attachment.attachmentContentType === PDF_CONTENT_TYPE;
+  }
+
+  /**
+   * The 0-based page a quoted string first appears on, for a PDF full-text hit.
+   * Matches on whitespace-normalized block text, so a query that survives a
+   * line wrap still resolves. Null when there is no page structure or no match.
+   */
+  public async pageOfText(
+    attachment: Zotero.Item,
+    query: string,
+  ): Promise<number | null> {
+    if (!this.isPdf(attachment)) return null;
+    const needle = normalizeForMatch(query);
+    if (!needle) return null;
+
+    const reader = await this.gateway.getSdtReader(attachment.id);
+    if (!reader) return null;
+
+    const total = reader.getTopLevelBlockCount();
+    const blocks = total > 0 ? await reader.getBlocks(0, total - 1) : [];
+    for (const block of blocks) {
+      if (normalizeForMatch(blockText(block)).includes(needle)) {
+        const pageIndex = firstPageIndex(block);
+        if (pageIndex !== undefined) return pageIndex;
+      }
+    }
+    return null;
   }
 
   public async fullText(

@@ -5,8 +5,15 @@
 
 import { InvalidArgumentError } from "../errors";
 import { ALL_SECTIONS, type ReadSection } from "../services/readService";
-import { EPUB_CONTENT_TYPE } from "../services/documentTextService";
-import { buildCollectionSelectUri, buildOpenUri } from "../services/uriService";
+import {
+  EPUB_CONTENT_TYPE,
+  PDF_CONTENT_TYPE,
+} from "../services/documentTextService";
+import {
+  buildCollectionSelectUri,
+  buildOpenPdfUri,
+  buildOpenUri,
+} from "../services/uriService";
 import { jsonResult, type ToolContext, type ToolResult } from "./registry";
 
 type Args = Record<string, unknown>;
@@ -119,6 +126,12 @@ export async function librarySearch(
               record.cfiUri = buildOpenUri(attachment.key, {
                 cfi: matches[0].pointCfi,
               });
+            }
+          } else if (attachment.attachmentContentType === PDF_CONTENT_TYPE) {
+            // A PDF hit gets a page deep link to the page the text is on.
+            const pageIndex = await ctx.documents.pageOfText(attachment, query);
+            if (pageIndex !== null) {
+              record.pageUri = buildOpenPdfUri(attachment.key, { pageIndex });
             }
           }
           break;

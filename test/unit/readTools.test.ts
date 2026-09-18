@@ -144,6 +144,41 @@ describe("read tools", function () {
       );
     });
 
+    it("adds a page open link for a full-text hit in a PDF", async function () {
+      gateway.addItem({ key: "ABCD1234", id: 1, attachmentIDs: [2] });
+      gateway.addItem({
+        key: "PDFX0001",
+        id: 2,
+        itemType: "attachment",
+        attachmentContentType: "application/pdf",
+      });
+      gateway.searchResults = [1];
+      gateway.cacheText = "page three talks about gradient descent in depth";
+      gateway.sdtReader = reader(
+        [
+          {
+            type: "paragraph",
+            anchor: { pageRects: [[2, 10, 20, 300, 40]] },
+            content: [{ text: "a paragraph about gradient descent here" }],
+          } as never,
+        ],
+        {},
+      );
+
+      const payload = parse(
+        await call("library_search", {
+          mode: "fulltext",
+          query: "gradient descent",
+        }),
+      );
+
+      expect(payload.items[0].snippetFrom).to.equal("PDFX0001");
+      // pageRects page index 2 -> 1-based page 3.
+      expect(payload.items[0].pageUri).to.equal(
+        "zotero://open-pdf/library/items/PDFX0001?page=3",
+      );
+    });
+
     it("omits the item title for an annotation hit, whose text is the label", async function () {
       const annotation = gateway.addItem({
         key: "ANNO0001",

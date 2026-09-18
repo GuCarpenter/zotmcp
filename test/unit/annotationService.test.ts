@@ -306,6 +306,70 @@ describe("annotationService", function () {
     });
   });
 
+  describe("character-exact highlight on a PDF", function () {
+    it("uses glyph geometry to rect just the quoted words", async function () {
+      gateway.sdtReader = reader([
+        {
+          type: "paragraph",
+          anchor: { pageRects: [[0, 100, 700, 145, 710]] },
+          content: [
+            {
+              text: "AB CD",
+              anchor: {
+                textMap: JSON.stringify([
+                  [
+                    0,
+                    0,
+                    100,
+                    700,
+                    145,
+                    710,
+                    [0, 10],
+                    [0, 10],
+                    [5, 10],
+                    [0, 10],
+                  ],
+                ]),
+              },
+            } as unknown as SdtNode,
+          ],
+        },
+      ]);
+
+      const created = await service.highlightText(pdf, { text: "B CD" });
+
+      expect(created.granularity).to.equal("exact");
+      expect(created.note).to.equal(undefined);
+      expect(created.page).to.equal(1);
+
+      const position = gateway.savedAnnotations[0].json.position as any;
+      expect(position.pageIndex).to.equal(0);
+      // B..D, character-exact, not the whole "AB CD" block.
+      expect(position.rects).to.deep.equal([[110, 700, 145, 710]]);
+      expect(gateway.savedAnnotations[0].json.text).to.equal("B CD");
+      expect(created.uri.openPdf).to.equal(
+        `zotero://open-pdf/library/items/EFGH5678?page=1&annotation=${created.key}`,
+      );
+    });
+
+    it("falls back to the block when the quote has no glyph geometry", async function () {
+      gateway.sdtReader = reader([
+        {
+          type: "paragraph",
+          anchor: { pageRects: [[0, 10, 20, 300, 40]] },
+          content: [{ text: "a plain block without a text map" }],
+        } as unknown as SdtNode,
+      ]);
+
+      const created = await service.highlightText(pdf, {
+        text: "plain block",
+      });
+
+      expect(created.granularity).to.equal("block");
+      expect(created.note).to.include("paragraph containing");
+    });
+  });
+
   describe("explicit rects", function () {
     it("creates an exact highlight", async function () {
       const created = await service.highlightRects(pdf, {

@@ -16,11 +16,13 @@
 import { InvalidArgumentError, TextNotFoundError } from "../errors";
 import {
   blockText,
+  collectTextLeaves,
   EPUB_CONTENT_TYPE,
   firstPageIndex,
   PDF_CONTENT_TYPE,
 } from "./documentTextService";
 import { EpubCfiService } from "./epubCfiService";
+import { rectsForText, type TextLeaf } from "./pdfTextMap";
 import { UNDO_ACTIONS, undoLabel } from "./undo";
 import { buildItemUris, type UriLocation } from "./uriService";
 import type { ItemResolver } from "./itemResolver";
@@ -118,6 +120,25 @@ export class AnnotationService {
     }
 
     const { block } = matches[0];
+
+    // Prefer a character-exact highlight built from the leaves' glyph geometry;
+    // fall back to the block rectangle when the quote is not present verbatim
+    // (e.g. whitespace differs) or the pack carries no textMap.
+    const leaves = collectTextLeaves(block) as TextLeaf[];
+    const exact = rectsForText(leaves, needle);
+    if (exact) {
+      return this.savePdf(attachment, {
+        type: "highlight",
+        pageIndex: exact.pageIndex,
+        rects: exact.rects,
+        text: needle,
+        comment: input.comment,
+        color: input.color,
+        tags: input.tags,
+        granularity: "exact",
+      });
+    }
+
     const pageRects = block.anchor?.pageRects ?? [];
     if (!pageRects.length) {
       throw new InvalidArgumentError(
@@ -150,9 +171,10 @@ export class AnnotationService {
       tags: input.tags,
       granularity: "block",
       note:
-        "The highlight covers the paragraph containing the quoted text. " +
-        "Character-precise geometry is not available from Zotero's structured " +
-        "text; pass page and rects for an exact highlight.",
+        "The highlight covers the paragraph containing the quoted text, " +
+        "because the exact quote could not be matched to glyph geometry " +
+        "(often a whitespace difference). Quote the text verbatim, or pass " +
+        "page and rects, for a character-exact highlight.",
     });
   }
 

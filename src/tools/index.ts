@@ -63,8 +63,9 @@ const specs: ToolSpec[] = [
       "Find items, collections and tags in My Library. Modes: keyword metadata " +
       "search, structured field conditions, boolean tag search, citation-key " +
       "lookup, indexed full-text search with snippets, and annotation search by " +
-      "text, colour or tag. A full-text hit in an EPUB also carries a CFI open " +
-      "link to the matched passage. Also lists the trash. Results are paginated.",
+      "text, colour or tag. A full-text hit carries a deep link to the passage: " +
+      "a page link for a PDF, a CFI link for an EPUB. Also lists the trash. " +
+      "Results are paginated.",
     mutability: "read",
     inputSchema: OBJECT_SCHEMA({
       mode: {
@@ -340,8 +341,9 @@ const specs: ToolSpec[] = [
     name: "annotation_write",
     description:
       "Create, edit or remove annotations. 'highlightText' quotes text and " +
-      "highlights it: a PDF highlight covers the containing paragraph, an EPUB " +
-      "highlight is character-exact and placed by CFI. 'highlightRects' and " +
+      "highlights it character-exact from the document's glyph geometry (a CFI " +
+      "range in an EPUB, page rectangles in a PDF), falling back to the whole " +
+      "paragraph if the quote cannot be placed exactly. 'highlightRects' and " +
       "'areaRect' take exact page rectangles in PDF user space. Update changes " +
       "comment, colour or tags; delete moves the annotation to the trash.",
     mutability: "write",

@@ -275,6 +275,8 @@ export interface SdtNode {
   anchor?: {
     pageRects?: number[][];
     pageIndex?: number;
+    /** Packed per-glyph geometry for a PDF text leaf; see pdfTextMap.ts. */
+    textMap?: string;
   };
 }
 
