@@ -6,6 +6,7 @@
  * against a fake. Nothing outside this file may reference `Zotero` directly.
  */
 
+import type { CfiDomNode, EpubSpine } from "./epubCfi";
 import { config } from "../../package.json";
 
 /** Zotero's default connector-server port. */
@@ -160,6 +161,14 @@ export interface ZoteroGateway {
     itemID: number,
     maxPages?: number,
   ): Promise<{ text?: string; pageChars?: number[] } | null>;
+
+  /**
+   * Reads an EPUB attachment's spine into parsed content documents plus the
+   * `<spine>` element's position in the package, everything the CFI builder
+   * needs. Null when the attachment is not an EPUB or its file is unreadable.
+   * Privileged (zip reading and XHTML parsing), so it lives here.
+   */
+  readEpubSpine(attachment: Zotero.Item): Promise<EpubSpine | null>;
 
   /**
    * Runs `fn` inside a Zotero DB transaction. Multi-save operations rely on this
@@ -728,6 +737,109 @@ export class RealZoteroGateway implements ZoteroGateway {
     }
   }
 
+  public async readEpubSpine(
+    attachment: Zotero.Item,
+  ): Promise<EpubSpine | null> {
+    try {
+      if (attachment.attachmentContentType !== "application/epub+zip") {
+        return null;
+      }
+      const path = await this.getAttachmentPath(attachment);
+      if (!path) return null;
+
+      const file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
+      file.initWithPath(path);
+      const zip = Cc["@mozilla.org/libjar/zip-reader;1"].createInstance(
+        Ci.nsIZipReader,
+      );
+      zip.open(file);
+
+      try {
+        const read = (entry: string): string => {
+          const stream = zip.getInputStream(entry);
+          const converter = Cc[
+            "@mozilla.org/intl/converter-input-stream;1"
+          ].createInstance(Ci.nsIConverterInputStream);
+          converter.init(stream, "UTF-8", 0, 0);
+          let text = "";
+          const chunk: { value: string } = { value: "" };
+          while (converter.readString(65536, chunk) !== 0) text += chunk.value;
+          converter.close();
+          return text;
+        };
+
+        const parser = new DOMParser();
+
+        const container = parser.parseFromString(
+          read("META-INF/container.xml"),
+          "application/xml",
+        );
+        const opfPath = container
+          .querySelector("rootfile")
+          ?.getAttribute("full-path");
+        if (!opfPath) return null;
+        const opfDir = opfPath.includes("/")
+          ? opfPath.replace(/[^/]+$/, "")
+          : "";
+
+        const opf = parser.parseFromString(read(opfPath), "application/xml");
+        const packageElement = opf.documentElement;
+        const spineElement = opf.querySelector("spine");
+        if (!packageElement || !spineElement) return null;
+
+        const spineElementChildIndex = Array.prototype.indexOf.call(
+          packageElement.children,
+          spineElement,
+        );
+        if (spineElementChildIndex < 0) return null;
+
+        const manifest = new Map<string, string>();
+        opf.querySelectorAll("manifest > item").forEach((item: Element) => {
+          const id = item.getAttribute("id");
+          const href = item.getAttribute("href");
+          if (id && href) manifest.set(id, href);
+        });
+
+        const documents: EpubSpine["documents"] = [];
+        const itemrefs = Array.prototype.slice.call(
+          opf.querySelectorAll("spine > itemref"),
+        ) as Element[];
+
+        itemrefs.forEach((itemref, index) => {
+          const idref = itemref.getAttribute("idref");
+          const href = idref ? manifest.get(idref) : undefined;
+          if (!href) return;
+
+          const entry = resolveEpubPath(opfDir, href);
+          let xhtml: string;
+          try {
+            xhtml = read(entry);
+          } catch {
+            // A spine item whose file is missing is skipped, not fatal: the rest
+            // of the book still yields usable locations.
+            return;
+          }
+
+          const doc = parser.parseFromString(xhtml, "application/xhtml+xml");
+          if (doc.querySelector("parsererror") || !doc.documentElement) return;
+
+          documents.push({
+            index,
+            root: doc.documentElement as unknown as CfiDomNode,
+          });
+        });
+
+        if (!documents.length) return null;
+        return { spineElementChildIndex, documents };
+      } finally {
+        zip.close();
+      }
+    } catch (e) {
+      this.log("WARN readEpubSpine failed", attachment.key, e);
+      return null;
+    }
+  }
+
   public async getCollectionByKey(
     libraryID: number,
     key: string,
@@ -1143,4 +1255,27 @@ export class RealZoteroGateway implements ZoteroGateway {
       totalPages,
     };
   }
+}
+
+/**
+ * Resolves a manifest `href` (relative to the OPF's directory) to a zip entry
+ * path, collapsing `.`/`..` and decoding percent-escapes so it matches the
+ * archive's literal entry names.
+ */
+function resolveEpubPath(opfDir: string, href: string): string {
+  let decoded = href;
+  try {
+    decoded = decodeURIComponent(href);
+  } catch {
+    // A malformed escape means the href is used as-is; the read simply fails
+    // and that spine item is skipped.
+  }
+  const segments = `${opfDir}${decoded}`.split("/");
+  const out: string[] = [];
+  for (const segment of segments) {
+    if (segment === "" || segment === ".") continue;
+    if (segment === "..") out.pop();
+    else out.push(segment);
+  }
+  return out.join("/");
 }

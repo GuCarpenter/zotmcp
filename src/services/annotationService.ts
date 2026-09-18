@@ -20,8 +20,9 @@ import {
   firstPageIndex,
   PDF_CONTENT_TYPE,
 } from "./documentTextService";
+import { EpubCfiService } from "./epubCfiService";
 import { UNDO_ACTIONS, undoLabel } from "./undo";
-import { buildItemUris } from "./uriService";
+import { buildItemUris, type UriLocation } from "./uriService";
 import type { ItemResolver } from "./itemResolver";
 import type { SdtNode, ZoteroGateway } from "./zoteroGateway";
 
@@ -59,11 +60,14 @@ export class AnnotationService {
   constructor(
     private readonly gateway: ZoteroGateway,
     private readonly resolver: ItemResolver,
+    private readonly epubCfi: EpubCfiService = new EpubCfiService(gateway),
   ) {}
 
   /**
-   * Locates `text` in the document and highlights the block containing it.
-   * Refuses rather than guessing when the text is absent or ambiguous.
+   * Locates `text` in the document and highlights it. A PDF highlight covers the
+   * containing block, since Zotero's structured text carries no character-level
+   * geometry; an EPUB highlight is character-exact, built from a CFI. Refuses
+   * rather than guessing when the text is absent or ambiguous.
    */
   public async highlightText(
     attachment: Zotero.Item,
@@ -77,6 +81,10 @@ export class AnnotationService {
         "Provide at least four characters of the text to highlight; a shorter " +
           "string matches too much of the document to place reliably.",
       );
+    }
+
+    if (attachment.attachmentContentType === EPUB_CONTENT_TYPE) {
+      return this.highlightEpubText(attachment, needle, input);
     }
 
     const reader = await this.gateway.getSdtReader(attachment.id);
@@ -132,7 +140,7 @@ export class AnnotationService {
       .filter((rect) => rect[0] === pageIndex)
       .map((rect) => rect.slice(1));
 
-    return this.save(attachment, {
+    return this.savePdf(attachment, {
       type: "highlight",
       pageIndex,
       rects,
@@ -148,6 +156,47 @@ export class AnnotationService {
     });
   }
 
+  /**
+   * Highlights the exact quoted text in an EPUB via a CFI range. EPUBs have no
+   * page geometry, so this is the only way to place a highlight — and unlike the
+   * PDF path it is character-exact.
+   */
+  private async highlightEpubText(
+    attachment: Zotero.Item,
+    needle: string,
+    input: HighlightFromTextInput,
+  ): Promise<CreatedAnnotation> {
+    const matches = await this.epubCfi.locate(attachment, needle);
+
+    if (!matches.length) {
+      throw new TextNotFoundError(attachment.key, needle);
+    }
+    if (matches.length > 1) {
+      throw new InvalidArgumentError(
+        `The text appears in ${matches.length} places in attachment ` +
+          `"${attachment.key}". Quote a longer, unique passage.`,
+      );
+    }
+
+    const match = matches[0];
+    return this.persist(attachment, {
+      type: "highlight",
+      text: match.matchedText,
+      comment: input.comment,
+      color: input.color,
+      tags: input.tags,
+      granularity: "exact",
+      position: {
+        type: "FragmentSelector",
+        conformsTo: "http://www.idpf.org/epub/linking/cfi/epub-cfi.html",
+        value: match.rangeCfi,
+      },
+      sortIndex: match.sortIndex,
+      pageLabel: "",
+      uriLocation: {},
+    });
+  }
+
   /** Highlight from caller-supplied PDF user-space rects. */
   public async highlightRects(
     attachment: Zotero.Item,
@@ -156,7 +205,7 @@ export class AnnotationService {
     this.assertHighlightable(attachment);
     const { pageIndex, rects } = normalizeRectInput(input);
 
-    return this.save(attachment, {
+    return this.savePdf(attachment, {
       type: "highlight",
       pageIndex,
       rects,
@@ -187,7 +236,7 @@ export class AnnotationService {
       );
     }
 
-    return this.save(attachment, {
+    return this.savePdf(attachment, {
       type: "image",
       pageIndex,
       rects,
@@ -260,7 +309,7 @@ export class AnnotationService {
     }
   }
 
-  private async save(
+  private async savePdf(
     attachment: Zotero.Item,
     input: {
       type: string;
@@ -274,6 +323,39 @@ export class AnnotationService {
       note?: string;
     },
   ): Promise<CreatedAnnotation> {
+    return this.persist(attachment, {
+      type: input.type,
+      text: input.text,
+      comment: input.comment,
+      color: input.color,
+      tags: input.tags,
+      granularity: input.granularity,
+      note: input.note,
+      position: { pageIndex: input.pageIndex, rects: input.rects },
+      sortIndex: buildSortIndex(input.pageIndex, input.rects),
+      pageLabel: String(input.pageIndex + 1),
+      uriLocation: { pageIndex: input.pageIndex },
+      page: input.pageIndex + 1,
+    });
+  }
+
+  private async persist(
+    attachment: Zotero.Item,
+    input: {
+      type: string;
+      text?: string;
+      comment?: string;
+      color?: string;
+      tags?: string[];
+      granularity: AnnotationGranularity;
+      note?: string;
+      position: Record<string, unknown>;
+      sortIndex: string;
+      pageLabel: string;
+      uriLocation: UriLocation;
+      page?: number;
+    },
+  ): Promise<CreatedAnnotation> {
     const key = this.gateway.generateObjectKey();
 
     const saved = await this.gateway.saveAnnotation(
@@ -284,9 +366,9 @@ export class AnnotationService {
         ...(input.text === undefined ? {} : { text: input.text }),
         comment: input.comment ?? "",
         color: input.color ?? DEFAULT_COLOR,
-        pageLabel: String(input.pageIndex + 1),
-        sortIndex: buildSortIndex(input.pageIndex, input.rects),
-        position: { pageIndex: input.pageIndex, rects: input.rects },
+        pageLabel: input.pageLabel,
+        sortIndex: input.sortIndex,
+        position: input.position,
         tags: (input.tags ?? []).map((tag) => ({ name: tag })),
       },
       // Creating an object is not undoable in Zotero, so no undo label is
@@ -297,13 +379,13 @@ export class AnnotationService {
     return {
       key: (saved.key as string) ?? key,
       type: input.type,
-      page: input.pageIndex + 1,
+      ...(input.page === undefined ? {} : { page: input.page }),
       granularity: input.granularity,
       uri: buildItemUris({
         key: attachment.key,
         isAttachment: true,
         contentType: attachment.attachmentContentType,
-        location: { pageIndex: input.pageIndex, annotationKey: key },
+        location: { ...input.uriLocation, annotationKey: key },
       }),
       ...(input.note ? { note: input.note } : {}),
     };

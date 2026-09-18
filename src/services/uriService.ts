@@ -51,6 +51,8 @@ export interface UriLocation {
   /** Zotero's 0-based reader page index; converted to `page` here. */
   pageIndex?: number;
   annotationKey?: string;
+  /** An EPUB CFI, e.g. `epubcfi(/6/12!/4/2/26/1:17)`; emitted URL-encoded. */
+  cfi?: string;
 }
 
 function withParams(base: string, location?: UriLocation): string {
@@ -70,6 +72,12 @@ function withParams(base: string, location?: UriLocation): string {
 
   if (location.annotationKey) {
     params.push(`annotation=${location.annotationKey}`);
+  }
+
+  // Zotero's protocol handler reads `cfi` and runs it through
+  // decodeURIComponent, so the whole `epubcfi(...)` string is encoded here.
+  if (location.cfi) {
+    params.push(`cfi=${encodeURIComponent(location.cfi)}`);
   }
 
   return params.length ? `${base}?${params.join("&")}` : base;

@@ -5,7 +5,8 @@
 
 import { InvalidArgumentError } from "../errors";
 import { ALL_SECTIONS, type ReadSection } from "../services/readService";
-import { buildCollectionSelectUri } from "../services/uriService";
+import { EPUB_CONTENT_TYPE } from "../services/documentTextService";
+import { buildCollectionSelectUri, buildOpenUri } from "../services/uriService";
 import { jsonResult, type ToolContext, type ToolResult } from "./registry";
 
 type Args = Record<string, unknown>;
@@ -109,6 +110,17 @@ export async function librarySearch(
         if (snippet) {
           record.snippet = snippet;
           record.snippetFrom = attachment.key;
+          // For an EPUB the hit can be turned into a CFI deep link that opens
+          // the reader at the matched passage. Only when the query appears
+          // verbatim and uniquely enough to point at one place.
+          if (attachment.attachmentContentType === EPUB_CONTENT_TYPE) {
+            const matches = await ctx.epubCfi.locate(attachment, query);
+            if (matches.length) {
+              record.cfiUri = buildOpenUri(attachment.key, {
+                cfi: matches[0].pointCfi,
+              });
+            }
+          }
           break;
         }
       }

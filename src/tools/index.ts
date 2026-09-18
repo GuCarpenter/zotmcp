@@ -63,7 +63,8 @@ const specs: ToolSpec[] = [
       "Find items, collections and tags in My Library. Modes: keyword metadata " +
       "search, structured field conditions, boolean tag search, citation-key " +
       "lookup, indexed full-text search with snippets, and annotation search by " +
-      "text, colour or tag. Also lists the trash. Results are paginated.",
+      "text, colour or tag. A full-text hit in an EPUB also carries a CFI open " +
+      "link to the matched passage. Also lists the trash. Results are paginated.",
     mutability: "read",
     inputSchema: OBJECT_SCHEMA({
       mode: {
@@ -339,9 +340,10 @@ const specs: ToolSpec[] = [
     name: "annotation_write",
     description:
       "Create, edit or remove annotations. 'highlightText' quotes text and " +
-      "highlights the paragraph containing it; 'highlightRects' and 'areaRect' " +
-      "take exact page rectangles in PDF user space. Update changes comment, " +
-      "colour or tags; delete moves the annotation to the trash.",
+      "highlights it: a PDF highlight covers the containing paragraph, an EPUB " +
+      "highlight is character-exact and placed by CFI. 'highlightRects' and " +
+      "'areaRect' take exact page rectangles in PDF user space. Update changes " +
+      "comment, colour or tags; delete moves the annotation to the trash.",
     mutability: "write",
     inputSchema: OBJECT_SCHEMA(
       {
@@ -349,15 +351,20 @@ const specs: ToolSpec[] = [
           type: "string",
           enum: [
             "highlightText",
+            "highlightRects",
             "areaRect",
-            "highlightEpub",
             "update",
             "delete",
           ],
         },
         attachmentKey: ITEM_KEY,
         annotationKey: ITEM_KEY,
-        text: { type: "string", description: "Exact text to highlight." },
+        text: {
+          type: "string",
+          description:
+            "Exact text to highlight (for 'highlightText'); must appear " +
+            "verbatim and only once in the document.",
+        },
         page: { type: "number", description: "1-based page number." },
         rects: {
           type: "array",

@@ -5,6 +5,12 @@ import {
 } from "../../src/services/annotationService";
 import { ItemResolver } from "../../src/services/itemResolver";
 import type { SdtNode, SdtReader } from "../../src/services/zoteroGateway";
+import {
+  ELEMENT_NODE,
+  TEXT_NODE,
+  type CfiDomNode,
+  type EpubSpine,
+} from "../../src/services/epubCfi";
 import { FakeGateway } from "./fakeGateway";
 
 function block(text: string, pageIndex: number, type = "paragraph"): SdtNode {
@@ -33,6 +39,37 @@ function reader(blocks: SdtNode[]): SdtReader {
       return blocks;
     },
   };
+}
+
+/** Builds an EPUB spine of one `html>body>p` document per paragraph string. */
+function epubSpine(paragraphs: string[]): EpubSpine {
+  const wrap = (nodeType: number, children: CfiDomNode[]): CfiDomNode => {
+    const node: CfiDomNode = {
+      nodeType,
+      parentNode: null,
+      childNodes: children,
+      children: children.filter((c) => c.nodeType === ELEMENT_NODE),
+      nodeValue: null,
+      getAttribute: () => null,
+    };
+    for (const child of children)
+      (child as { parentNode: CfiDomNode | null }).parentNode = node;
+    return node;
+  };
+  const documents = paragraphs.map((value, index) => {
+    const textNode: CfiDomNode = {
+      nodeType: TEXT_NODE,
+      parentNode: null,
+      childNodes: [],
+      nodeValue: value,
+      getAttribute: () => null,
+    };
+    const p = wrap(ELEMENT_NODE, [textNode]);
+    const body = wrap(ELEMENT_NODE, [p]);
+    const html = wrap(ELEMENT_NODE, [wrap(ELEMENT_NODE, []), body]);
+    return { index, root: html };
+  });
+  return { spineElementChildIndex: 2, documents };
 }
 
 describe("annotationService", function () {
@@ -183,6 +220,89 @@ describe("annotationService", function () {
       const position = gateway.savedAnnotations[0].json.position as any;
       expect(position.pageIndex).to.equal(0);
       expect(position.rects).to.deep.equal([[10, 20, 300, 40]]);
+    });
+  });
+
+  describe("highlight from text on an EPUB", function () {
+    let epub: Zotero.Item;
+
+    beforeEach(function () {
+      epub = gateway.addItem({
+        key: "EPUB0001",
+        id: 6,
+        itemType: "attachment",
+        attachmentContentType: "application/epub+zip",
+      }) as unknown as Zotero.Item;
+    });
+
+    it("places a character-exact CFI highlight and links to the annotation", async function () {
+      gateway.epubSpine = epubSpine([
+        "This book is the successor edition of FPGA prototyping.",
+      ]);
+
+      const created = await service.highlightText(epub, {
+        text: "successor edition",
+        comment: "note",
+      });
+
+      expect(created.type).to.equal("highlight");
+      expect(created.granularity).to.equal("exact");
+      expect(created.page).to.equal(undefined);
+
+      const saved = gateway.savedAnnotations[0].json;
+      const position = saved.position as any;
+      expect(position.type).to.equal("FragmentSelector");
+      expect(position.value).to.match(/^epubcfi\(.*,.*,.*\)$/);
+      expect(String(saved.sortIndex)).to.match(/^\d{5}\|\d{8}$/);
+      expect(saved.comment).to.equal("note");
+
+      // EPUB annotations open via the annotation deep link, which works on the
+      // plain open scheme.
+      expect(created.uri.open).to.equal(
+        `zotero://open/library/items/EPUB0001?annotation=${created.key}`,
+      );
+    });
+
+    it("refuses text that appears more than once", async function () {
+      gateway.epubSpine = epubSpine([
+        "the same passage here",
+        "and the same passage here again",
+      ]);
+
+      let error: any;
+      try {
+        await service.highlightText(epub, { text: "the same passage" });
+      } catch (e) {
+        error = e;
+      }
+      expect(error?.code).to.equal("invalid_argument");
+      expect(error.message).to.include("2 places");
+      expect(gateway.savedAnnotations).to.have.length(0);
+    });
+
+    it("refuses text it cannot find", async function () {
+      gateway.epubSpine = epubSpine(["nothing relevant here"]);
+
+      let error: any;
+      try {
+        await service.highlightText(epub, { text: "absent passage" });
+      } catch (e) {
+        error = e;
+      }
+      expect(error?.code).to.equal("not_found");
+      expect(gateway.savedAnnotations).to.have.length(0);
+    });
+
+    it("reports not found when the EPUB file cannot be read", async function () {
+      gateway.epubSpine = null;
+
+      let error: any;
+      try {
+        await service.highlightText(epub, { text: "any passage" });
+      } catch (e) {
+        error = e;
+      }
+      expect(error?.code).to.equal("not_found");
     });
   });
 

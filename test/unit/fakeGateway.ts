@@ -10,6 +10,7 @@ import type {
   SearchHandle,
   ZoteroGateway,
 } from "../../src/services/zoteroGateway";
+import type { EpubSpine } from "../../src/services/epubCfi";
 
 export const USER_LIBRARY_ID = 1;
 export const GROUP_LIBRARY_ID = 7;
@@ -121,6 +122,8 @@ export class FakeGateway implements ZoteroGateway {
   public cacheText = "";
   public sdtReader: SdtReader | null = null;
   public pdfText: { text?: string; pageChars?: number[] } | null = null;
+  /** Canned EPUB spine for readEpubSpine; null unless a test sets it. */
+  public epubSpine: EpubSpine | null = null;
   public activeReader: ActiveReaderDetails | null = null;
   public openReaders: ActiveReaderDetails[] = [];
 
@@ -422,6 +425,12 @@ export class FakeGateway implements ZoteroGateway {
     _itemID: number,
   ): Promise<{ text?: string; pageChars?: number[] } | null> {
     return this.pdfText;
+  }
+
+  public async readEpubSpine(
+    _attachment: Zotero.Item,
+  ): Promise<EpubSpine | null> {
+    return this.epubSpine;
   }
 
   public async getCollectionByKey(

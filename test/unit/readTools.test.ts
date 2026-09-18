@@ -3,10 +3,48 @@ import { createToolRegistry } from "../../src/tools";
 import { createToolContext } from "../../src/services/toolContext";
 import type { ToolContext } from "../../src/tools/registry";
 import type { SdtNode, SdtReader } from "../../src/services/zoteroGateway";
+import {
+  ELEMENT_NODE,
+  TEXT_NODE,
+  type CfiDomNode,
+  type EpubSpine,
+} from "../../src/services/epubCfi";
 import { FakeGateway } from "./fakeGateway";
 
 function parse(result: { content: { text: string }[] }): any {
   return JSON.parse(result.content[0].text);
+}
+
+/** Minimal EPUB spine (html > body > p > text) containing `phrase`. */
+function epubSpineWith(phrase: string, spineIndex: number): EpubSpine {
+  const textNode: CfiDomNode = {
+    nodeType: TEXT_NODE,
+    parentNode: null,
+    childNodes: [],
+    nodeValue: `intro ${phrase} outro`,
+    getAttribute: () => null,
+  };
+  const wrap = (nodeType: number, children: CfiDomNode[]): CfiDomNode => {
+    const node: CfiDomNode = {
+      nodeType,
+      parentNode: null,
+      childNodes: children,
+      children: children.filter((c) => c.nodeType === ELEMENT_NODE),
+      nodeValue: null,
+      getAttribute: () => null,
+    };
+    for (const child of children)
+      (child as { parentNode: CfiDomNode | null }).parentNode = node;
+    return node;
+  };
+  const p = wrap(ELEMENT_NODE, [textNode]);
+  const body = wrap(ELEMENT_NODE, [p]);
+  const head = wrap(ELEMENT_NODE, []);
+  const html = wrap(ELEMENT_NODE, [head, body]);
+  return {
+    spineElementChildIndex: 2,
+    documents: [{ index: spineIndex, root: html }],
+  };
 }
 
 function reader(
@@ -79,6 +117,31 @@ describe("read tools", function () {
 
       expect(payload.items[0].snippet).to.include("gradient descent");
       expect(payload.items[0].snippetFrom).to.equal("EFGH5678");
+    });
+
+    it("adds a CFI open link for a full-text hit in an EPUB", async function () {
+      gateway.addItem({ key: "ABCD1234", id: 1, attachmentIDs: [2] });
+      gateway.addItem({
+        key: "EPUB0001",
+        id: 2,
+        itemType: "attachment",
+        attachmentContentType: "application/epub+zip",
+      });
+      gateway.searchResults = [1];
+      gateway.cacheText = "chapter text about gradient descent here";
+      gateway.epubSpine = epubSpineWith("gradient descent", 3);
+
+      const payload = parse(
+        await call("library_search", {
+          mode: "fulltext",
+          query: "gradient descent",
+        }),
+      );
+
+      expect(payload.items[0].snippetFrom).to.equal("EPUB0001");
+      expect(payload.items[0].cfiUri).to.match(
+        /^zotero:\/\/open\/library\/items\/EPUB0001\?cfi=epubcfi\(/,
+      );
     });
 
     it("omits the item title for an annotation hit, whose text is the label", async function () {

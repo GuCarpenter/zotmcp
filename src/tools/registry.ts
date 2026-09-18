@@ -6,6 +6,7 @@
 
 import type { AnnotationService } from "../services/annotationService";
 import type { DocumentTextService } from "../services/documentTextService";
+import type { EpubCfiService } from "../services/epubCfiService";
 import type { ItemResolver } from "../services/itemResolver";
 import type { MutationService } from "../services/mutationService";
 import type {
@@ -33,6 +34,7 @@ export interface ToolContext {
   read: ReadService;
   notes: NoteService;
   annotations: AnnotationService;
+  epubCfi: EpubCfiService;
   writes: WriteService;
   collections: CollectionService;
   imports: ImportService;
