@@ -14,7 +14,12 @@ import {
   buildOpenPdfUri,
   buildOpenUri,
 } from "../services/uriService";
-import { jsonResult, type ToolContext, type ToolResult } from "./registry";
+import {
+  imageResult,
+  jsonResult,
+  type ToolContext,
+  type ToolResult,
+} from "./registry";
 
 type Args = Record<string, unknown>;
 
@@ -260,7 +265,8 @@ export async function annotationWrite(
   const action = str(args, "action");
   if (!action) {
     throw new InvalidArgumentError(
-      '"action" is required: highlightText, areaRect, update or delete.',
+      '"action" is required: highlightText, highlightRects, areaRect, ' +
+        "areaFigure, update or delete.",
     );
   }
 
@@ -323,10 +329,22 @@ export async function annotationWrite(
           }),
         ),
       );
+    case "areaFigure":
+      return jsonResult(
+        await ctx.mutations.enqueue("annotation area", () =>
+          ctx.annotations.areaFromFigure(attachment, {
+            figure: str(args, "figure") ?? "",
+            page: args.page === undefined ? undefined : Number(args.page),
+            comment: str(args, "comment"),
+            color: str(args, "color"),
+            tags: strArray(args, "tags"),
+          }),
+        ),
+      );
     default:
       throw new InvalidArgumentError(
         `Unknown action ${JSON.stringify(action)}: expected highlightText, ` +
-          `highlightRects, areaRect, update or delete.`,
+          `highlightRects, areaRect, areaFigure, update or delete.`,
       );
   }
 }
@@ -350,4 +368,28 @@ export async function readerRead(
   });
 
   return jsonResult(result);
+}
+
+export async function imageRead(
+  args: Args,
+  ctx: ToolContext,
+): Promise<ToolResult> {
+  const source = str(args, "source");
+  if (!source) {
+    throw new InvalidArgumentError(
+      '"source" is required: annotation, attachment, page or reader.',
+    );
+  }
+
+  const result = await ctx.images.read({
+    source: source as never,
+    attachmentKey: args.attachmentKey,
+    annotationKey: args.annotationKey,
+    page: args.page,
+    rect: args.rect,
+    figure: args.figure,
+  });
+
+  const { base64, mimeType, ...metadata } = result;
+  return imageResult({ data: base64, mimeType }, { mimeType, ...metadata });
 }

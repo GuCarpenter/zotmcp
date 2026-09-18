@@ -8,6 +8,7 @@
 
 import {
   annotationWrite,
+  imageRead,
   libraryRead,
   librarySearch,
   noteWrite,
@@ -30,6 +31,7 @@ export const TOOL_NAMES = [
   "library_read",
   "paper_read",
   "reader_read",
+  "image_read",
   "library_import",
   "library_update",
   "collection_update",
@@ -204,6 +206,71 @@ const specs: ToolSpec[] = [
     handler: readerRead,
   },
   {
+    name: "image_read",
+    description:
+      "Read an image as actual pixels, returned as MCP image content. Sources: " +
+      "'annotation' renders an image (area) or ink annotation's region; " +
+      "'attachment' returns an image attachment's file, such as an " +
+      "EPUB-embedded image; 'page' renders a full PDF page (1-based) through " +
+      "the reader's PDF.js engine, opening a background reader if none is open; " +
+      "'reader' captures the reader's currently visible viewport (scroll, zoom " +
+      "and cross-page views included) from any open reader; " +
+      "'region' crops an explicit PDF page rectangle [x1,y1,x2,y2] in user " +
+      "space; 'figure' locates a figure or table by label (e.g. 'Figure 1') " +
+      "from Zotero's Structured Document Text layout model and crops it (for a " +
+      "PDF), or extracts the embedded image for that figure (for an EPUB).",
+    mutability: "read",
+    inputSchema: OBJECT_SCHEMA(
+      {
+        source: {
+          type: "string",
+          enum: [
+            "annotation",
+            "attachment",
+            "page",
+            "reader",
+            "region",
+            "figure",
+          ],
+          description: "Which image to read.",
+        },
+        attachmentKey: {
+          ...ITEM_KEY,
+          description:
+            "Attachment key, for the 'attachment', 'page', 'reader', 'region' " +
+            "and 'figure' sources. For 'reader' it is optional and selects a " +
+            "specific open reader; omit it to use the active reader.",
+        },
+        annotationKey: {
+          ...ITEM_KEY,
+          description:
+            "Annotation key, for the 'annotation' source (image or ink type).",
+        },
+        page: {
+          type: "number",
+          description:
+            "1-based PDF page number, for the 'page' and 'region' sources, and " +
+            "an optional page restriction for 'figure'.",
+        },
+        rect: {
+          type: "array",
+          items: { type: "number" },
+          description:
+            "Page-coordinate rectangle [x1, y1, x2, y2] in PDF user space, for " +
+            "the 'region' source.",
+        },
+        figure: {
+          type: "string",
+          description:
+            "Figure or table label to locate, for the 'figure' source, e.g. " +
+            "'Figure 1', 'Fig. 2' or 'Table 3'.",
+        },
+      },
+      ["source"],
+    ),
+    handler: imageRead,
+  },
+  {
     name: "library_import",
     description:
       "Add items to My Library. 'identifiers' resolves DOI, ISBN, arXiv ID, " +
@@ -344,8 +411,11 @@ const specs: ToolSpec[] = [
       "highlights it character-exact from the document's glyph geometry (a CFI " +
       "range in an EPUB, page rectangles in a PDF), falling back to the whole " +
       "paragraph if the quote cannot be placed exactly. 'highlightRects' and " +
-      "'areaRect' take exact page rectangles in PDF user space. Update changes " +
-      "comment, colour or tags; delete moves the annotation to the trash.",
+      "'areaRect' take exact page rectangles in PDF user space. 'areaFigure' " +
+      "places an area annotation on a figure or table located automatically by " +
+      "label (e.g. 'Figure 1') from Zotero's Structured Document Text layout. " +
+      "Update changes comment, colour or tags; delete moves the annotation to " +
+      "the trash.",
     mutability: "write",
     inputSchema: OBJECT_SCHEMA(
       {
@@ -355,6 +425,7 @@ const specs: ToolSpec[] = [
             "highlightText",
             "highlightRects",
             "areaRect",
+            "areaFigure",
             "update",
             "delete",
           ],
@@ -367,7 +438,18 @@ const specs: ToolSpec[] = [
             "Exact text to highlight (for 'highlightText'); must appear " +
             "verbatim and only once in the document.",
         },
-        page: { type: "number", description: "1-based page number." },
+        figure: {
+          type: "string",
+          description:
+            "Figure or table label to locate, for 'areaFigure', e.g. " +
+            "'Figure 1', 'Fig. 2' or 'Table 3'.",
+        },
+        page: {
+          type: "number",
+          description:
+            "1-based page number. Required for 'areaRect'/'highlightRects'; " +
+            "an optional page restriction for 'areaFigure'.",
+        },
         rects: {
           type: "array",
           items: { type: "array", items: { type: "number" } },

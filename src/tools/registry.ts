@@ -7,6 +7,7 @@
 import type { AnnotationService } from "../services/annotationService";
 import type { DocumentTextService } from "../services/documentTextService";
 import type { EpubCfiService } from "../services/epubCfiService";
+import type { ImageService } from "../services/imageService";
 import type { ItemResolver } from "../services/itemResolver";
 import type { MutationService } from "../services/mutationService";
 import type {
@@ -35,6 +36,7 @@ export interface ToolContext {
   notes: NoteService;
   annotations: AnnotationService;
   epubCfi: EpubCfiService;
+  images: ImageService;
   writes: WriteService;
   collections: CollectionService;
   imports: ImportService;
@@ -49,8 +51,17 @@ export interface ToolTextContent {
   text: string;
 }
 
+export interface ToolImageContent {
+  type: "image";
+  /** Base64-encoded image bytes, without a data-URI prefix. */
+  data: string;
+  mimeType: string;
+}
+
+export type ToolContentPart = ToolTextContent | ToolImageContent;
+
 export interface ToolResult {
-  content: ToolTextContent[];
+  content: ToolContentPart[];
   structuredContent?: unknown;
   isError?: boolean;
 }
@@ -122,6 +133,27 @@ export function textResult(
 
 export function jsonResult(value: unknown): ToolResult {
   return textResult(JSON.stringify(value, null, 2), value);
+}
+
+/**
+ * A result whose payload is an image. The base64 bytes ride in an image content
+ * part, and any metadata is carried alongside as text plus structuredContent so
+ * a caller sees dimensions and provenance without decoding the image.
+ */
+export function imageResult(
+  image: { data: string; mimeType: string },
+  metadata?: Record<string, unknown>,
+): ToolResult {
+  const content: ToolContentPart[] = [
+    { type: "image", data: image.data, mimeType: image.mimeType },
+  ];
+  if (metadata) {
+    content.push({ type: "text", text: JSON.stringify(metadata, null, 2) });
+  }
+  return {
+    content,
+    ...(metadata === undefined ? {} : { structuredContent: metadata }),
+  };
 }
 
 /** A tool failure is a normal result with `isError`, not a JSON-RPC error. */

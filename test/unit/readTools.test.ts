@@ -11,8 +11,8 @@ import {
 } from "../../src/services/epubCfi";
 import { FakeGateway } from "./fakeGateway";
 
-function parse(result: { content: { text: string }[] }): any {
-  return JSON.parse(result.content[0].text);
+function parse(result: { content: { type: string; text?: string }[] }): any {
+  return JSON.parse(result.content[0].text ?? "");
 }
 
 /** Minimal EPUB spine (html > body > p > text) containing `phrase`. */

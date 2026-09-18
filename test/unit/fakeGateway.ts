@@ -127,6 +127,49 @@ export class FakeGateway implements ZoteroGateway {
   public activeReader: ActiveReaderDetails | null = null;
   public openReaders: ActiveReaderDetails[] = [];
 
+  /** Recorded calls and canned returns for the image-reading gateway methods. */
+  public binaryReads: { path: string; maxBytes?: number }[] = [];
+  public binaryFile: { base64: string; bytes: number } | null = null;
+  public annotationRenders: string[] = [];
+  public annotationImage: string | null = null;
+  public pageRenders: {
+    itemID: number;
+    pageIndex: number;
+    openIfNeeded: boolean;
+  }[] = [];
+  public pageImage: {
+    base64: string;
+    mimeType: string;
+    width: number;
+    height: number;
+  } | null = null;
+  public regionRenders: {
+    itemID: number;
+    pageIndex: number;
+    rect: [number, number, number, number];
+    openIfNeeded: boolean;
+  }[] = [];
+  public regionImage: {
+    base64: string;
+    mimeType: string;
+    width: number;
+    height: number;
+  } | null = null;
+  public viewportCaptures: number[] = [];
+  public viewportImage: {
+    base64: string;
+    mimeType: string;
+    width: number;
+    height: number;
+  } | null = null;
+  public epubFigureRequests: { key: string; label: string }[] = [];
+  public epubFigureImage: {
+    base64: string;
+    mimeType: string;
+    entry: string;
+    label: string;
+  } | null = null;
+
   /** Conditions from the most recent search. */
   public get lastSearch(): RecordedCondition[] {
     return this.searches[this.searches.length - 1] ?? [];
@@ -415,6 +458,82 @@ export class FakeGateway implements ZoteroGateway {
 
   public async readTextFile(_path: string): Promise<string> {
     return this.cacheText;
+  }
+
+  public async readBinaryFileAsBase64(
+    path: string,
+    maxBytes?: number,
+  ): Promise<{ base64: string; bytes: number } | null> {
+    this.binaryReads.push({ path, maxBytes });
+    return this.binaryFile;
+  }
+
+  public async renderAnnotationImage(
+    annotation: Zotero.Item,
+  ): Promise<string | null> {
+    this.annotationRenders.push(annotation.key);
+    return this.annotationImage;
+  }
+
+  public async renderPdfPageImage(
+    attachmentItemID: number,
+    pageIndex: number,
+    options: { openIfNeeded?: boolean } = {},
+  ): Promise<{
+    base64: string;
+    mimeType: string;
+    width: number;
+    height: number;
+  } | null> {
+    this.pageRenders.push({
+      itemID: attachmentItemID,
+      pageIndex,
+      openIfNeeded: options.openIfNeeded === true,
+    });
+    return this.pageImage;
+  }
+
+  public async renderPdfRegionImage(
+    attachmentItemID: number,
+    pageIndex: number,
+    rect: [number, number, number, number],
+    options: { openIfNeeded?: boolean } = {},
+  ): Promise<{
+    base64: string;
+    mimeType: string;
+    width: number;
+    height: number;
+  } | null> {
+    this.regionRenders.push({
+      itemID: attachmentItemID,
+      pageIndex,
+      rect,
+      openIfNeeded: options.openIfNeeded === true,
+    });
+    return this.regionImage;
+  }
+
+  public async captureReaderViewport(attachmentItemID: number): Promise<{
+    base64: string;
+    mimeType: string;
+    width: number;
+    height: number;
+  } | null> {
+    this.viewportCaptures.push(attachmentItemID);
+    return this.viewportImage;
+  }
+
+  public async extractEpubFigureImage(
+    attachment: Zotero.Item,
+    label: string,
+  ): Promise<{
+    base64: string;
+    mimeType: string;
+    entry: string;
+    label: string;
+  } | null> {
+    this.epubFigureRequests.push({ key: attachment.key, label });
+    return this.epubFigureImage;
   }
 
   public async getSdtReader(_itemID: number): Promise<SdtReader | null> {

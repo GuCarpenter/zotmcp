@@ -444,6 +444,62 @@ describe("annotationService", function () {
       expect(error.message).to.include("epub");
     });
 
+    it("places an area annotation on a figure located by label", async function () {
+      gateway.sdtReader = {
+        async getMetadata() {
+          return {};
+        },
+        async getCatalog() {
+          return {};
+        },
+        getTopLevelBlockCount() {
+          return 2;
+        },
+        async getBlocks() {
+          return [
+            {
+              type: "image",
+              content: [],
+              anchor: { pageRects: [[1, 100, 600, 500, 750]] },
+            },
+            {
+              type: "caption",
+              content: [{ text: "Figure 1: The GFS architecture" }],
+              anchor: { pageRects: [[1, 100, 560, 500, 595]] },
+            },
+          ] as unknown as SdtNode[];
+        },
+        async getPageBlocks() {
+          return [];
+        },
+      };
+
+      const created = await service.areaFromFigure(pdf, { figure: "Figure 1" });
+
+      expect(created.type).to.equal("image");
+      expect(created.page).to.equal(2);
+      expect(created.note).to.include("Figure 1");
+      const saved = gateway.savedAnnotations[0].json;
+      expect(saved.type).to.equal("image");
+      expect((saved.position as any).pageIndex).to.equal(1);
+      // Union of the image and caption rects on the same page.
+      expect((saved.position as any).rects).to.deep.equal([
+        [100, 560, 500, 750],
+      ]);
+    });
+
+    it("refuses areaFigure when the label cannot be located", async function () {
+      gateway.sdtReader = null;
+      let error: any;
+      try {
+        await service.areaFromFigure(pdf, { figure: "Figure 9" });
+      } catch (e) {
+        error = e;
+      }
+      expect(error?.code).to.equal("invalid_argument");
+      expect(error.message).to.include("Could not locate");
+    });
+
     it("refuses to highlight a non-document attachment", async function () {
       const png = gateway.addItem({
         key: "IMGX0001",

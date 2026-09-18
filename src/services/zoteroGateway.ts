@@ -150,6 +150,87 @@ export interface ZoteroGateway {
   readTextFile(path: string, maxLength?: number): Promise<string>;
 
   /**
+   * Reads a file's raw bytes and returns them base64-encoded, or null when the
+   * file is missing or larger than `maxBytes`. Used to hand image bytes back to
+   * an MCP client. Privileged (raw file IO), so it lives on the gateway.
+   */
+  readBinaryFileAsBase64(
+    path: string,
+    maxBytes?: number,
+  ): Promise<{ base64: string; bytes: number } | null>;
+
+  /**
+   * Renders an image or ink annotation to a base64 PNG (no data-URI prefix),
+   * populating Zotero's annotation image cache first when needed. Null when the
+   * annotation is not renderable or its parent PDF is unavailable.
+   */
+  renderAnnotationImage(annotation: Zotero.Item): Promise<string | null>;
+
+  /**
+   * Renders a single PDF page to a base64 PNG using the reader's PDF.js engine.
+   * Requires an open reader for the attachment; when `openIfNeeded` is set and
+   * none is open, a background reader is opened, used and left in place. Null
+   * when no reader is available or the page cannot be rendered.
+   */
+  renderPdfPageImage(
+    attachmentItemID: number,
+    pageIndex: number,
+    options?: { openIfNeeded?: boolean },
+  ): Promise<{
+    base64: string;
+    mimeType: string;
+    width: number;
+    height: number;
+  } | null>;
+
+  /**
+   * Renders a rectangular region of a PDF page to a base64 PNG, cropped to the
+   * given page-coordinate rect `[x1, y1, x2, y2]` (PDF user space, the same
+   * space annotation rects use). Same reader requirement as `renderPdfPageImage`.
+   */
+  renderPdfRegionImage(
+    attachmentItemID: number,
+    pageIndex: number,
+    rect: [number, number, number, number],
+    options?: { openIfNeeded?: boolean },
+  ): Promise<{
+    base64: string;
+    mimeType: string;
+    width: number;
+    height: number;
+  } | null>;
+
+  /**
+   * Captures the reader's currently visible viewport for an open attachment as
+   * a base64 PNG — exactly what is painted, including scroll offset, zoom and a
+   * continuous view spanning two pages. Works for any reader type (PDF, EPUB,
+   * snapshot). Null when the attachment is not open in a reader.
+   */
+  captureReaderViewport(attachmentItemID: number): Promise<{
+    base64: string;
+    mimeType: string;
+    width: number;
+    height: number;
+  } | null>;
+
+  /**
+   * Extracts an EPUB's embedded figure image by caption label (e.g.
+   * "Figure 3.5"): finds the caption in the spine, resolves the associated
+   * `<img>` inside its `<figure>` (or the nearest one), and reads that image
+   * entry's bytes from the EPUB zip. Null when the attachment is not an EPUB or
+   * the label cannot be matched to an image.
+   */
+  extractEpubFigureImage(
+    attachment: Zotero.Item,
+    label: string,
+  ): Promise<{
+    base64: string;
+    mimeType: string;
+    entry: string;
+    label: string;
+  } | null>;
+
+  /**
    * Zotero 10's Structured Document Text pack for a PDF, EPUB or snapshot
    * attachment: typed blocks, a page catalogue and an outline, cached on disk and
    * invalidated by source hash. Null when unavailable for this attachment.
@@ -691,6 +772,605 @@ export class RealZoteroGateway implements ZoteroGateway {
       "utf-8",
       maxLength,
     ) as Promise<string>;
+  }
+
+  public async readBinaryFileAsBase64(
+    path: string,
+    maxBytes?: number,
+  ): Promise<{ base64: string; bytes: number } | null> {
+    try {
+      const io = IOUtils as unknown as {
+        stat(path: string): Promise<{ size: number }>;
+        read(path: string, opts?: { maxBytes?: number }): Promise<Uint8Array>;
+      };
+      if (maxBytes !== undefined) {
+        const info = await io.stat(path);
+        if (typeof info?.size === "number" && info.size > maxBytes) {
+          this.log(
+            "WARN readBinaryFileAsBase64 exceeds maxBytes",
+            path,
+            info.size,
+            maxBytes,
+          );
+          return null;
+        }
+      }
+      const bytes = await io.read(path);
+      return { base64: base64FromBytes(bytes), bytes: bytes.length };
+    } catch (e) {
+      // A missing or unreadable file is a normal "no image" outcome, not a crash.
+      this.log("WARN readBinaryFileAsBase64 failed", path, e);
+      return null;
+    }
+  }
+
+  public async renderAnnotationImage(
+    annotation: Zotero.Item,
+  ): Promise<string | null> {
+    try {
+      const annotations = Zotero.Annotations as unknown as {
+        getCacheImagePath(item: { libraryID: number; key: string }): string;
+        hasCacheImage(item: {
+          libraryID: number;
+          key: string;
+        }): Promise<boolean>;
+      };
+      const annType = (annotation as unknown as { annotationType?: string })
+        .annotationType;
+      if (annType !== "image" && annType !== "ink") return null;
+
+      // For a PDF parent the image cache may not exist yet; the PDF worker
+      // renders every missing image/ink annotation on demand.
+      const parent = (annotation as unknown as { parentItem?: Zotero.Item })
+        .parentItem;
+      const isPdf = Boolean(
+        parent &&
+        (
+          parent as unknown as { isPDFAttachment?(): boolean }
+        ).isPDFAttachment?.(),
+      );
+      if (isPdf && parent && !(await annotations.hasCacheImage(annotation))) {
+        try {
+          await (
+            Zotero as unknown as {
+              PDFWorker: {
+                renderAttachmentAnnotations(
+                  itemID: number,
+                  isPriority?: boolean,
+                ): Promise<number>;
+              };
+            }
+          ).PDFWorker.renderAttachmentAnnotations(parent.id, true);
+        } catch (e) {
+          this.log(
+            "WARN renderAttachmentAnnotations failed",
+            annotation.key,
+            e,
+          );
+        }
+      }
+
+      const path = annotations.getCacheImagePath(annotation);
+      const result = await this.readBinaryFileAsBase64(path);
+      return result?.base64 ?? null;
+    } catch (e) {
+      this.log("WARN renderAnnotationImage failed", annotation.key, e);
+      return null;
+    }
+  }
+
+  public async renderPdfPageImage(
+    attachmentItemID: number,
+    pageIndex: number,
+    options: { openIfNeeded?: boolean } = {},
+  ): Promise<{
+    base64: string;
+    mimeType: string;
+    width: number;
+    height: number;
+  } | null> {
+    return this.renderViaReader(attachmentItemID, pageIndex, null, options);
+  }
+
+  public async renderPdfRegionImage(
+    attachmentItemID: number,
+    pageIndex: number,
+    rect: [number, number, number, number],
+    options: { openIfNeeded?: boolean } = {},
+  ): Promise<{
+    base64: string;
+    mimeType: string;
+    width: number;
+    height: number;
+  } | null> {
+    return this.renderViaReader(attachmentItemID, pageIndex, rect, options);
+  }
+
+  /**
+   * Renders a PDF page, or a page-coordinate region of it, by driving the open
+   * reader's own PDF.js renderer (`_pdfRenderer.renderRegionCrops`). That keeps
+   * the whole render inside the reader's content scope — the only place the
+   * viewer's document and canvases are usable — and returns a PNG data URL. A
+   * null `rect` renders the full page view box.
+   */
+  private async renderViaReader(
+    attachmentItemID: number,
+    pageIndex: number,
+    rect: [number, number, number, number] | null,
+    options: { openIfNeeded?: boolean },
+  ): Promise<{
+    base64: string;
+    mimeType: string;
+    width: number;
+    height: number;
+  } | null> {
+    try {
+      let reader = this.findReaderByItemID(attachmentItemID);
+      if (!reader && options.openIfNeeded) {
+        reader = await this.openBackgroundReader(attachmentItemID);
+      }
+      if (!reader) return null;
+
+      const ctx = this.getReaderRenderContext(reader);
+      if (!ctx) return null;
+      const { win, renderer, pdfDocument } = ctx;
+
+      const pageNumber = pageIndex + 1;
+      if (pageNumber < 1 || pageNumber > pdfDocument.numPages) return null;
+
+      // A null rect means the whole page: fall back to the page's view box.
+      let region = rect;
+      if (!region) {
+        const page = waiveXrays(await pdfDocument.getPage(pageNumber)) as {
+          view: number[];
+        };
+        const v = page.view;
+        if (!v || v.length < 4) return null;
+        region = [v[0], v[1], v[2], v[3]];
+      }
+
+      // renderRegionCrops runs in the reader's content scope, so the rect array
+      // must be cloned into that scope or the content code cannot read it.
+      const crops = waiveXrays(
+        await renderer.renderRegionCrops(pageIndex, cloneInto([region], win)),
+      ) as string[];
+      const dataUrl = crops?.[0];
+      if (typeof dataUrl !== "string" || !dataUrl) return null;
+
+      const base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
+      const dims = pngDimensions(base64);
+      return {
+        base64,
+        mimeType: "image/png",
+        width: dims?.width ?? 0,
+        height: dims?.height ?? 0,
+      };
+    } catch (e) {
+      this.log("WARN renderViaReader failed", attachmentItemID, pageIndex, e);
+      return null;
+    }
+  }
+
+  public async captureReaderViewport(attachmentItemID: number): Promise<{
+    base64: string;
+    mimeType: string;
+    width: number;
+    height: number;
+  } | null> {
+    try {
+      const reader = this.findReaderByItemID(attachmentItemID);
+      if (!reader) return null;
+      const internal = reader._internalReader as
+        Record<string, unknown> | undefined;
+      const primaryView = (internal?._primaryView ?? reader._primaryView) as
+        Record<string, unknown> | undefined;
+      const cwin = primaryView?._iframeWindow as
+        (Window & { devicePixelRatio?: number }) | undefined;
+      if (!cwin) return null;
+
+      const mainWin = (
+        Zotero as unknown as { getMainWindow?(): Window | undefined }
+      ).getMainWindow?.();
+      if (!mainWin) return null;
+
+      const dpr = cwin.devicePixelRatio || 1;
+      const cssWidth = cwin.innerWidth;
+      const cssHeight = cwin.innerHeight;
+      if (!(cssWidth > 0) || !(cssHeight > 0)) return null;
+
+      // pdf.js renders pages lazily: a page just scrolled into view can still be
+      // mid-render (renderingState RUNNING) with a blank canvas, which
+      // drawWindow would capture as an empty page. Force and await rendering of
+      // the visible pages first. No-op for EPUB/snapshot readers.
+      await this.waitForVisiblePdfPages(cwin);
+
+      const canvas = mainWin.document.createElementNS(
+        "http://www.w3.org/1999/xhtml",
+        "canvas",
+      ) as HTMLCanvasElement;
+      canvas.width = Math.floor(cssWidth * dpr);
+      canvas.height = Math.floor(cssHeight * dpr);
+
+      // drawWindow is a privileged, chrome-only 2D-context method that paints a
+      // DOM window's current pixels — the faithful "screenshot" of the reader's
+      // visible area, including scroll, zoom and cross-page content.
+      const ctx = canvas.getContext("2d") as CanvasRenderingContext2D & {
+        drawWindow(
+          window: Window,
+          x: number,
+          y: number,
+          w: number,
+          h: number,
+          bgColor: string,
+        ): void;
+      };
+      ctx.scale(dpr, dpr);
+      ctx.drawWindow(cwin, 0, 0, cssWidth, cssHeight, "rgb(255,255,255)");
+
+      const dataUrl = canvas.toDataURL("image/png") as string;
+      canvas.width = 0;
+      canvas.height = 0;
+
+      return {
+        base64: dataUrl.replace(/^data:image\/png;base64,/, ""),
+        mimeType: "image/png",
+        width: Math.floor(cssWidth * dpr),
+        height: Math.floor(cssHeight * dpr),
+      };
+    } catch (e) {
+      this.log("WARN captureReaderViewport failed", attachmentItemID, e);
+      return null;
+    }
+  }
+
+  public async extractEpubFigureImage(
+    attachment: Zotero.Item,
+    label: string,
+  ): Promise<{
+    base64: string;
+    mimeType: string;
+    entry: string;
+    label: string;
+  } | null> {
+    if (attachment.attachmentContentType !== "application/epub+zip")
+      return null;
+    const parsed = parseFigureLabel(label);
+    if (!parsed) return null;
+
+    let zip: ZipHandle | null = null;
+    try {
+      const path = await this.getAttachmentPath(attachment);
+      if (!path) return null;
+
+      const file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
+      file.initWithPath(path);
+      zip = Cc["@mozilla.org/libjar/zip-reader;1"].createInstance(
+        Ci.nsIZipReader,
+      ) as unknown as ZipHandle;
+      zip.open(file);
+
+      const readText = (entry: string): string => {
+        const stream = zip!.getInputStream(entry);
+        const converter = Cc[
+          "@mozilla.org/intl/converter-input-stream;1"
+        ].createInstance(Ci.nsIConverterInputStream);
+        converter.init(stream as never, "UTF-8", 0, 0);
+        let text = "";
+        const chunk: { value: string } = { value: "" };
+        while (converter.readString(65536, chunk) !== 0) text += chunk.value;
+        converter.close();
+        return text;
+      };
+
+      const parser = new DOMParser();
+      const container = parser.parseFromString(
+        readText("META-INF/container.xml"),
+        "application/xml",
+      );
+      const opfPath = container
+        .querySelector("rootfile")
+        ?.getAttribute("full-path");
+      if (!opfPath) return null;
+      const opfDir = opfPath.includes("/") ? opfPath.replace(/[^/]+$/, "") : "";
+
+      const opf = parser.parseFromString(readText(opfPath), "application/xml");
+      const manifest = new Map<string, string>();
+      opf.querySelectorAll("manifest > item").forEach((item: Element) => {
+        const id = item.getAttribute("id");
+        const href = item.getAttribute("href");
+        if (id && href) manifest.set(id, href);
+      });
+      const itemrefs = Array.prototype.slice.call(
+        opf.querySelectorAll("spine > itemref"),
+      ) as Element[];
+
+      for (const itemref of itemrefs) {
+        const idref = itemref.getAttribute("idref");
+        const href = idref ? manifest.get(idref) : undefined;
+        if (!href) continue;
+        const docEntry = resolveEpubPath(opfDir, href);
+        let xhtml: string;
+        try {
+          xhtml = readText(docEntry);
+        } catch {
+          continue;
+        }
+        if (!/figure|table/i.test(xhtml)) continue;
+
+        const doc = parser.parseFromString(xhtml, "application/xhtml+xml");
+        if (doc.querySelector("parsererror")) continue;
+
+        const src = this.findEpubFigureImageSrc(doc, parsed);
+        if (!src) continue;
+
+        // Resolve the img src (relative to the doc's folder) to a zip entry.
+        const docDir = docEntry.includes("/")
+          ? docEntry.replace(/[^/]+$/, "")
+          : "";
+        const imgEntry = resolveEpubPath(docDir, src);
+        const bytes = this.readZipEntryBytes(zip!, imgEntry);
+        if (!bytes) continue;
+
+        return {
+          base64: base64FromBytes(bytes),
+          mimeType: mimeFromExtension(imgEntry),
+          entry: imgEntry,
+          label: parsed.canonical,
+        };
+      }
+      return null;
+    } catch (e) {
+      this.log("WARN extractEpubFigureImage failed", attachment.key, e);
+      return null;
+    } finally {
+      try {
+        zip?.close();
+      } catch {
+        // Best-effort close.
+      }
+    }
+  }
+
+  /**
+   * Finds the `<img>` src for a figure caption in a parsed EPUB document.
+   * Prefers a `<figure>` whose `<figcaption>` matches the label (the image is
+   * inside that figure); otherwise matches a caption-like block and takes the
+   * nearest preceding image, then the nearest following one.
+   */
+  private findEpubFigureImageSrc(
+    doc: Document,
+    parsed: { kind: FigureKind; num: string; canonical: string },
+  ): string | null {
+    const matches = (text: string): boolean => {
+      const other = parseFigureLabel(text);
+      return !!other && other.kind === parsed.kind && other.num === parsed.num;
+    };
+
+    // 1. Semantic <figure>/<figcaption>.
+    const figures = Array.prototype.slice.call(
+      doc.querySelectorAll("figure"),
+    ) as Element[];
+    for (const figure of figures) {
+      const caption = figure.querySelector("figcaption");
+      if (
+        caption &&
+        matches((caption.textContent ?? "").replace(/\s+/g, " "))
+      ) {
+        const img = figure.querySelector("img");
+        const src = img?.getAttribute("src");
+        if (src) return src;
+      }
+    }
+
+    // 2. A caption-like block, then the nearest image by document position. A
+    //    bare cross-reference link ("see Figure 3.5") is skipped by requiring
+    //    the caption to carry text beyond the label itself.
+    const imgs = Array.prototype.slice.call(
+      doc.querySelectorAll("img"),
+    ) as Element[];
+    if (!imgs.length) return null;
+    const blocks = Array.prototype.slice.call(
+      doc.querySelectorAll("p, div, figcaption, caption"),
+    ) as Element[];
+    for (const block of blocks) {
+      if (block.tagName.toLowerCase() === "a") continue;
+      const text = (block.textContent ?? "").replace(/\s+/g, " ").trim();
+      if (!matches(text)) continue;
+      if (text.length <= parsed.canonical.length + 3) continue;
+
+      let prev: Element | null = null;
+      let next: Element | null = null;
+      for (const img of imgs) {
+        const rel = block.compareDocumentPosition(img);
+        if (rel & 2 /* PRECEDING */) prev = img;
+        else if (rel & 4 /* FOLLOWING */ && !next) next = img;
+      }
+      const src =
+        prev?.getAttribute("src") ?? next?.getAttribute("src") ?? null;
+      if (src) return src;
+    }
+    return null;
+  }
+
+  private readZipEntryBytes(zip: ZipHandle, entry: string): Uint8Array | null {
+    try {
+      const stream = zip.getInputStream(entry);
+      const binary = Cc["@mozilla.org/binaryinputstream;1"].createInstance(
+        Ci.nsIBinaryInputStream,
+      );
+      binary.setInputStream(stream as never);
+      const parts: number[][] = [];
+      let total = 0;
+      for (;;) {
+        const available = binary.available();
+        if (!available) break;
+        const bytes = binary.readByteArray(Math.min(available, 1 << 20));
+        if (!bytes.length) break;
+        parts.push(bytes);
+        total += bytes.length;
+      }
+      binary.close();
+      const out = new Uint8Array(total);
+      let offset = 0;
+      for (const part of parts) {
+        out.set(part, offset);
+        offset += part.length;
+      }
+      return out;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * For a PDF reader, forces and waits for every page intersecting the visible
+   * viewport to finish rendering (pdf.js `RenderingState.FINISHED` = 3), so a
+   * subsequent capture is not blank. Best-effort and bounded by a timeout; a
+   * no-op for readers without a pdf.js viewer (EPUB, snapshot).
+   */
+  private async waitForVisiblePdfPages(
+    cwin: Window,
+    timeoutMs = 3000,
+  ): Promise<void> {
+    try {
+      const app = (cwin as unknown as { PDFViewerApplication?: unknown })
+        .PDFViewerApplication;
+      if (!app) return;
+      const viewer = waiveXrays((app as { pdfViewer?: unknown }).pdfViewer) as {
+        container?: { scrollTop: number; clientHeight: number };
+        _pages?: {
+          div?: { offsetTop: number; offsetHeight: number };
+          renderingState?: number;
+        }[];
+        forceRendering?: () => void;
+      };
+      const container = viewer?.container;
+      if (!viewer || !container) return;
+
+      const visiblePending = (): boolean => {
+        const top = container.scrollTop;
+        const bottom = top + container.clientHeight;
+        const pages = viewer._pages ?? [];
+        for (const page of pages) {
+          const el = page?.div;
+          if (!el) continue;
+          const elTop = el.offsetTop;
+          const elBottom = elTop + el.offsetHeight;
+          if (elBottom > top && elTop < bottom && page.renderingState !== 3) {
+            return true;
+          }
+        }
+        return false;
+      };
+
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline && visiblePending()) {
+        try {
+          viewer.forceRendering?.();
+        } catch {
+          // Rendering nudge is best-effort.
+        }
+        await new Promise((resolve) => setTimeout(resolve, 60));
+      }
+    } catch (e) {
+      this.log("WARN waitForVisiblePdfPages failed", e);
+    }
+  }
+
+  /** Finds an open reader instance (tab or window) for the given attachment. */
+  private findReaderByItemID(itemID: number): Record<string, unknown> | null {
+    try {
+      const readers = (
+        Zotero as unknown as { Reader?: { _readers?: unknown[] } }
+      ).Reader?._readers;
+      if (!Array.isArray(readers)) return null;
+      const found = (readers as Record<string, unknown>[]).find(
+        (r) =>
+          r && !r._isTabClosed && !r._isUninitialized && r.itemID === itemID,
+      );
+      return found ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async openBackgroundReader(
+    itemID: number,
+  ): Promise<Record<string, unknown> | null> {
+    try {
+      await (
+        Zotero as unknown as {
+          Reader: {
+            open(
+              itemID: number,
+              location?: unknown,
+              options?: Record<string, unknown>,
+            ): Promise<unknown>;
+          };
+        }
+      ).Reader.open(itemID, null, { openInBackground: true });
+    } catch (e) {
+      this.log("WARN could not open background reader", itemID, e);
+      return null;
+    }
+
+    // The reader initialises asynchronously; wait for its PDF document.
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const reader = this.findReaderByItemID(itemID);
+      if (reader && this.getReaderRenderContext(reader)) return reader;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return this.findReaderByItemID(itemID);
+  }
+
+  /**
+   * Assembles what a render needs from an open reader: the iframe window (to
+   * clone args into its scope), the reader's own `_pdfRenderer` and the loaded
+   * PDF document, both waived out of their Xray wrappers so their methods are
+   * callable. Null until the reader has finished loading its document.
+   */
+  private getReaderRenderContext(reader: Record<string, unknown>): {
+    win: Window & typeof globalThis;
+    renderer: {
+      renderRegionCrops(
+        pageIndex: number,
+        rects: number[][],
+      ): Promise<string[]>;
+    };
+    pdfDocument: {
+      numPages: number;
+      getPage(n: number): Promise<unknown>;
+    };
+  } | null {
+    const internal = reader._internalReader as
+      Record<string, unknown> | undefined;
+    const primaryView = (internal?._primaryView ?? reader._primaryView) as
+      Record<string, unknown> | undefined;
+    if (!primaryView) return null;
+
+    const win = primaryView._iframeWindow as
+      | ({ PDFViewerApplication?: { pdfDocument?: unknown } } & Window)
+      | undefined;
+    const renderer = primaryView._pdfRenderer;
+    if (!win || !renderer) return null;
+
+    const app = win.PDFViewerApplication;
+    const pdfDocument = app?.pdfDocument;
+    if (!pdfDocument) return null;
+
+    return {
+      win: win as Window & typeof globalThis,
+      renderer: waiveXrays(renderer) as {
+        renderRegionCrops(
+          pageIndex: number,
+          rects: number[][],
+        ): Promise<string[]>;
+      },
+      pdfDocument: waiveXrays(pdfDocument) as {
+        numPages: number;
+        getPage(n: number): Promise<unknown>;
+      },
+    };
   }
 
   public async getSdtReader(itemID: number): Promise<SdtReader | null> {
@@ -1257,6 +1937,110 @@ export class RealZoteroGateway implements ZoteroGateway {
       totalPages,
     };
   }
+}
+
+/** Minimal view of `nsIZipReader` used for EPUB image extraction. */
+interface ZipHandle {
+  open(file: unknown): void;
+  close(): void;
+  getInputStream(entry: string): unknown;
+}
+
+type FigureKind = "figure" | "table";
+
+/**
+ * Parses a figure/table label into its kind, number and a canonical display
+ * form. Shared shape with FigureLocator, kept local to avoid a module cycle.
+ */
+function parseFigureLabel(
+  label: string,
+): { kind: FigureKind; num: string; canonical: string } | null {
+  const match = label
+    .toLowerCase()
+    .match(/^\s*(figure|fig\.?|table|tbl\.?)\s*([0-9]+(?:[.-][0-9]+)*)/);
+  if (!match) return null;
+  const kind: FigureKind = match[1].startsWith("t") ? "table" : "figure";
+  const canonical = `${kind === "table" ? "Table" : "Figure"} ${match[2]}`;
+  return { kind, num: match[2], canonical };
+}
+
+/** Best-guess image MIME type from a file entry's extension. */
+function mimeFromExtension(entry: string): string {
+  const ext = entry.toLowerCase().replace(/^.*\./, "");
+  switch (ext) {
+    case "png":
+      return "image/png";
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg";
+    case "gif":
+      return "image/gif";
+    case "svg":
+      return "image/svg+xml";
+    case "webp":
+      return "image/webp";
+    default:
+      return "image/jpeg";
+  }
+}
+
+/**
+ * Strips a Firefox Xray wrapper so a content object's own methods (pdf.js
+ * pages, the reader's renderer) can be called from the plugin's chrome scope.
+ */
+function waiveXrays<T>(value: T): T {
+  const cu = (Components as unknown as { utils?: { waiveXrays<U>(v: U): U } })
+    .utils;
+  return cu?.waiveXrays ? cu.waiveXrays(value) : value;
+}
+
+/**
+ * Clones a plain value into a content window's scope, so content code (the
+ * reader's renderer) can read it across the Xray boundary.
+ */
+function cloneInto<T>(value: T, targetWindow: unknown): T {
+  const cu = (
+    Components as unknown as {
+      utils?: { cloneInto<U>(v: U, win: unknown): U };
+    }
+  ).utils;
+  return cu?.cloneInto ? cu.cloneInto(value, targetWindow) : value;
+}
+
+/**
+ * Reads a PNG's pixel dimensions from its base64 bytes by decoding the IHDR
+ * chunk: an 8-byte signature, a 4-byte length and the "IHDR" tag, then the
+ * big-endian width and height. Null when the header is too short to trust.
+ */
+function pngDimensions(
+  base64: string,
+): { width: number; height: number } | null {
+  try {
+    const header = atob(base64.slice(0, 44));
+    if (header.length < 24) return null;
+    const at = (i: number): number => header.charCodeAt(i) & 0xff;
+    const width = (at(16) << 24) | (at(17) << 16) | (at(18) << 8) | at(19);
+    const height = (at(20) << 24) | (at(21) << 16) | (at(22) << 8) | at(23);
+    if (width <= 0 || height <= 0) return null;
+    return { width, height };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Base64-encodes raw bytes without exhausting the call stack: `btoa` needs a
+ * binary string, and spreading a large `Uint8Array` into `fromCharCode` can
+ * overflow, so the string is built in fixed-size chunks.
+ */
+function base64FromBytes(bytes: Uint8Array): string {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
 }
 
 /**

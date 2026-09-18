@@ -22,6 +22,7 @@ import {
   PDF_CONTENT_TYPE,
 } from "./documentTextService";
 import { EpubCfiService } from "./epubCfiService";
+import { FigureLocator } from "./figureLocator";
 import { rectsForText, type TextLeaf } from "./pdfTextMap";
 import { UNDO_ACTIONS, undoLabel } from "./undo";
 import { buildItemUris, type UriLocation } from "./uriService";
@@ -55,6 +56,14 @@ export interface RectInput {
   tags?: string[];
 }
 
+export interface FigureAreaInput {
+  figure: string;
+  page?: number;
+  comment?: string;
+  color?: string;
+  tags?: string[];
+}
+
 /** Zotero's palette; an arbitrary hex is accepted too. */
 const DEFAULT_COLOR = "#ffd400";
 
@@ -63,6 +72,7 @@ export class AnnotationService {
     private readonly gateway: ZoteroGateway,
     private readonly resolver: ItemResolver,
     private readonly epubCfi: EpubCfiService = new EpubCfiService(gateway),
+    private readonly figures: FigureLocator = new FigureLocator(gateway),
   ) {}
 
   /**
@@ -267,6 +277,62 @@ export class AnnotationService {
       tags: input.tags,
       granularity: "exact",
     });
+  }
+
+  /**
+   * Area annotation placed on a figure or table located automatically from the
+   * SDT layout model, so a caller can annotate "Figure 1" without hunting for
+   * its rectangle. Refuses rather than guessing when the label cannot be found.
+   */
+  public async areaFromFigure(
+    attachment: Zotero.Item,
+    input: FigureAreaInput,
+  ): Promise<CreatedAnnotation> {
+    if (attachment.attachmentContentType !== PDF_CONTENT_TYPE) {
+      throw new InvalidArgumentError(
+        `Area annotations require a PDF attachment; "${attachment.key}" is ` +
+          `"${attachment.attachmentContentType ?? "unknown"}".`,
+      );
+    }
+    if (!input.figure || !input.figure.trim()) {
+      throw new InvalidArgumentError(
+        '"figure" must be a label such as "Figure 1" or "Table 2".',
+      );
+    }
+
+    const restrictPage =
+      input.page === undefined || input.page === null
+        ? undefined
+        : Math.trunc(input.page) - 1;
+    if (restrictPage !== undefined && restrictPage < 0) {
+      throw new InvalidArgumentError(
+        `"page" must be a 1-based integer page number, got ${JSON.stringify(input.page)}.`,
+      );
+    }
+
+    const located = await this.figures.locate(
+      attachment.id,
+      input.figure.trim(),
+      restrictPage,
+    );
+    if (!located) {
+      throw new InvalidArgumentError(
+        `Could not locate "${input.figure}" in attachment "${attachment.key}". ` +
+          `The document may have no Structured Document Text layout, or the ` +
+          `label may not match a caption. Pass a page and rects instead.`,
+      );
+    }
+
+    const created = await this.savePdf(attachment, {
+      type: "image",
+      pageIndex: located.pageIndex,
+      rects: [located.rect],
+      comment: input.comment,
+      color: input.color,
+      tags: input.tags,
+      granularity: "exact",
+    });
+    return { ...created, note: `Placed on "${located.label}".` };
   }
 
   public async update(

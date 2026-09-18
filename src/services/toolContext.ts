@@ -12,6 +12,8 @@ import {
 } from "./libraryWriteServices";
 import { DocumentTextService } from "./documentTextService";
 import { EpubCfiService } from "./epubCfiService";
+import { FigureLocator } from "./figureLocator";
+import { ImageService } from "./imageService";
 import { ItemResolver } from "./itemResolver";
 import { MutationService } from "./mutationService";
 import { NoteService } from "./noteService";
@@ -27,6 +29,7 @@ export function createToolContext(gateway: ZoteroGateway): ToolContext {
   const resolver = new ItemResolver(gateway);
   const mutations = new MutationService(gateway);
   const epubCfi = new EpubCfiService(gateway);
+  const figures = new FigureLocator(gateway);
   return {
     gateway,
     resolver,
@@ -35,8 +38,9 @@ export function createToolContext(gateway: ZoteroGateway): ToolContext {
     documents: new DocumentTextService(gateway),
     read: new ReadService(gateway),
     notes: new NoteService(gateway, resolver),
-    annotations: new AnnotationService(gateway, resolver, epubCfi),
+    annotations: new AnnotationService(gateway, resolver, epubCfi, figures),
     epubCfi,
+    images: new ImageService(gateway, resolver, figures),
     writes: new WriteService(gateway, resolver, mutations),
     collections: new CollectionService(gateway, resolver, mutations),
     imports: new ImportService(gateway, resolver, mutations),
