@@ -56,18 +56,31 @@ jobs:
           WEB_EXT_API_SECRET: ${{ secrets.AMO_API_SECRET }}
           ARTIFACT: zotmcp-clipper-${{ github.ref_name }}.xpi
         run: |
-          set -euo pipefail
-          if [ -n "${WEB_EXT_API_KEY:-}" ] && [ -n "${WEB_EXT_API_SECRET:-}" ]; then
+          set -uo pipefail
+          pack_unsigned() {
+            rm -f "$ARTIFACT"
+            (cd firefox-clipper && zip -r -FS "../$ARTIFACT" . -x "*.DS_Store")
+          }
+          sign() {
             npx --yes web-ext sign \
               --source-dir firefox-clipper \
               --channel unlisted \
               --api-key "$WEB_EXT_API_KEY" \
               --api-secret "$WEB_EXT_API_SECRET" \
+              --timeout 900000 \
               --artifacts-dir web-ext-artifacts
+          }
+
+          if [ -z "${WEB_EXT_API_KEY:-}" ] || [ -z "${WEB_EXT_API_SECRET:-}" ]; then
+            echo "AMO credentials not set; packaging an unsigned .xpi."
+            pack_unsigned
+          elif sign || sign; then
+            # AMO's approval polling is occasionally flaky (503); one retry, then
+            # fall back so a transient outage never blocks the release.
             cp "$(ls web-ext-artifacts/*.xpi | head -n1)" "$ARTIFACT"
           else
-            echo "AMO credentials not set; packaging an unsigned .xpi."
-            (cd firefox-clipper && zip -r -FS "../$ARTIFACT" . -x "*.DS_Store")
+            echo "::warning::AMO signing failed; attaching an unsigned .xpi."
+            pack_unsigned
           fi
           echo "artifact=$ARTIFACT" >> "$GITHUB_OUTPUT"
 
