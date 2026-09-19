@@ -50,7 +50,7 @@ tradeoff is that the database is held for the script's whole run.
 
 ## Tools
 
-Twelve modal tools, kept small so the whole surface is cheap to send on every
+Fourteen modal tools, kept small so the whole surface is cheap to send on every
 request. `tools/list` is generated from the registry, so this list cannot drift
 from the code without failing a test.
 
@@ -58,15 +58,17 @@ from the code without failing a test.
 | ------------------- | ----------------------------------------------------------------------------------------------------------- |
 | `library_search`    | keyword, field-condition, tag, citation-key, full-text and annotation search; collections and tags; trash   |
 | `library_read`      | metadata, abstract, children, attachments, tags, notes, annotations                                         |
-| `paper_read`        | `fulltext`, `pages`, `sections` for PDF and EPUB                                                            |
+| `paper_read`        | `fulltext`, `pages`, `sections` for PDF and EPUB; `clean` article extraction from a web snapshot            |
 | `reader_read`       | open reader state: attachment item, page/location, active text or annotation selection, surrounding context |
-| `library_import`    | by identifier, from local files, or manual item creation                                                    |
+| `reader_navigate`   | open an attachment or move its reader to a page, page label, annotation or EPUB CFI                         |
+| `image_read`        | render page/region/figure or an annotation, attachment or reader viewport to image pixels                   |
+| `library_import`    | by identifier, from a URL, from local files, or manual item creation                                        |
 | `library_update`    | metadata, item tags, library-wide tag ops, reparent, related links; batchable                               |
 | `collection_update` | create, rename, move, delete, membership                                                                    |
 | `library_delete`    | trash, restore, merge duplicates                                                                            |
 | `attachment_update` | rename, relink, trash                                                                                       |
 | `note_write`        | create, update, append; Markdown in                                                                         |
-| `annotation_write`  | highlight by text or rects, area annotation, update, delete                                                 |
+| `annotation_write`  | highlight by text or rects, area annotation, area-by-figure, update, delete                                 |
 | `zotero_script`     | privileged JavaScript, `read` or `write`                                                                    |
 
 Plus three MCP resources: `zotero://collections`,
@@ -75,15 +77,14 @@ Plus three MCP resources: `zotero://collections`,
 ## Scope
 
 My Library only — group libraries are refused rather than silently mixed in.
-No semantic search, no external scholarly lookup, no EPUB annotation writing
-(Zotero positions those by CFI, which needs a DOM path the structured text
-does not expose).
+No semantic search and no external scholarly lookup.
 
 Reading is built on Zotero 10's structured document text, so PDF and EPUB share
 one path and sections come from the document's own outline. A text-located
-highlight covers the paragraph containing the quote and reports
-`granularity: "block"`, because character-precise geometry is not available from
-that data.
+highlight is placed character-exact where the quote's geometry can be resolved
+(a CFI range in an EPUB, page rectangles in a PDF) and reports
+`granularity: "exact"`, falling back to the whole containing paragraph with
+`granularity: "block"` when it cannot.
 
 ## Icon
 
