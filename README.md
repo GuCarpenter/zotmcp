@@ -1,5 +1,7 @@
 # zotmcp
 
+<img src="addon/content/icons/icon-96.png" alt="zotmcp icon" width="96" align="right" />
+
 An MCP server embedded in Zotero 10. Search, read, annotate and manage
 My Library from any MCP client.
 
