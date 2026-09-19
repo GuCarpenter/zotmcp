@@ -379,6 +379,29 @@ export async function readerRead(
   return jsonResult(result);
 }
 
+export async function readerNavigate(
+  args: Args,
+  ctx: ToolContext,
+): Promise<ToolResult> {
+  const result = await ctx.reader.navigate({
+    attachmentKey: args.attachmentKey,
+    page: args.page,
+    pageLabel: args.pageLabel,
+    annotationKey: args.annotationKey,
+    cfi: args.cfi,
+    openInBackground: args.openInBackground,
+    openInWindow: args.openInWindow,
+    includeContext:
+      args.includeContext === undefined
+        ? undefined
+        : Boolean(args.includeContext),
+    contextChars:
+      args.contextChars === undefined ? undefined : Number(args.contextChars),
+  });
+
+  return jsonResult(result);
+}
+
 export async function imageRead(
   args: Args,
   ctx: ToolContext,

@@ -13,6 +13,7 @@ import {
   librarySearch,
   noteWrite,
   paperRead,
+  readerNavigate,
   readerRead,
 } from "./readHandlers";
 import {
@@ -31,6 +32,7 @@ export const TOOL_NAMES = [
   "library_read",
   "paper_read",
   "reader_read",
+  "reader_navigate",
   "image_read",
   "library_import",
   "library_update",
@@ -208,6 +210,70 @@ const specs: ToolSpec[] = [
       },
     }),
     handler: readerRead,
+  },
+  {
+    name: "reader_navigate",
+    description:
+      "Open an attachment in Zotero's reader, or move the reader already open " +
+      "for it to a location. Pass 'page' (1-based) or 'pageLabel' to jump to a " +
+      "PDF page, 'annotationKey' to scroll to and select an existing " +
+      "annotation, or 'cfi' to jump to an EPUB location. With none of these the " +
+      "attachment is simply opened. Returns the resulting reader state. Set " +
+      "'openInBackground' to open without stealing focus, or 'openInWindow' for " +
+      "a standalone reader window.",
+    mutability: "write",
+    inputSchema: OBJECT_SCHEMA(
+      {
+        attachmentKey: {
+          ...ITEM_KEY,
+          description:
+            "8-character Zotero item key of the attachment to open or navigate.",
+        },
+        page: {
+          type: "number",
+          description: "1-based page number to jump to (PDF).",
+        },
+        pageLabel: {
+          type: "string",
+          description:
+            "Physical page label to jump to (PDF), e.g. 'iv' or '12'.",
+        },
+        annotationKey: {
+          ...ITEM_KEY,
+          description:
+            "Annotation key to scroll to and select; its page is resolved " +
+            "automatically.",
+        },
+        cfi: {
+          type: "string",
+          description:
+            "EPUB CFI to jump to, e.g. 'epubcfi(/6/12!/4/2/26/1:17)'.",
+        },
+        openInBackground: {
+          type: "boolean",
+          description:
+            "Open without selecting the tab or stealing focus. Default false.",
+        },
+        openInWindow: {
+          type: "boolean",
+          description:
+            "Open in a standalone reader window instead of a tab. Default false.",
+        },
+        includeContext: {
+          type: "boolean",
+          description:
+            "Include surrounding text context in the returned reader state. " +
+            "Default false.",
+        },
+        contextChars: {
+          type: "number",
+          description:
+            "Maximum character budget for surrounding text context. Default 600.",
+        },
+      },
+      ["attachmentKey"],
+    ),
+    handler: readerNavigate,
   },
   {
     name: "image_read",

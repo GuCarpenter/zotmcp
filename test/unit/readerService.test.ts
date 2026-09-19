@@ -395,6 +395,232 @@ describe("readerService", function () {
     expect(error?.code).to.equal("invalid_argument");
   });
 
+  describe("navigate", function () {
+    it("opens a PDF at a 1-based page and returns the reader state", async function () {
+      const attachment = gateway.addItem({
+        key: "PDFNAV01",
+        id: 100,
+        itemType: "attachment",
+        attachmentContentType: "application/pdf",
+      });
+      gateway.activeReader = {
+        itemID: attachment.id,
+        title: "Nav Paper",
+        type: "pdf",
+        state: { pageIndex: 4 },
+      };
+
+      const res = await service.navigate({
+        attachmentKey: "PDFNAV01",
+        page: 5,
+      });
+
+      expect(res.navigated).to.equal(true);
+      expect(res.target.page).to.equal(5);
+      expect(gateway.openReaderCalls).to.have.length(1);
+      expect(gateway.openReaderCalls[0].itemID).to.equal(attachment.id);
+      expect(gateway.openReaderCalls[0].location?.pageIndex).to.equal(4);
+      expect(res.reader.open).to.equal(true);
+    });
+
+    it("polls until a freshly opened reader reports its location", async function () {
+      const attachment = gateway.addItem({
+        key: "PDFNAV07",
+        id: 170,
+        itemType: "attachment",
+        attachmentContentType: "application/pdf",
+      });
+
+      // Simulate an initially unsettled reader: empty state until pdf.js lays
+      // out and applies the target page (pageIndex 6 for page 7).
+      let reads = 0;
+      (gateway as any).getActiveReader = (_id?: number) => {
+        reads += 1;
+        return {
+          itemID: attachment.id,
+          title: "Settling Paper",
+          type: "pdf",
+          state: reads >= 3 ? { pageIndex: 6 } : {},
+        };
+      };
+
+      const res = await service.navigate({
+        attachmentKey: "PDFNAV07",
+        page: 7,
+      });
+
+      expect(res.reader.open).to.equal(true);
+      if (res.reader.open) {
+        expect(res.reader.location.pageIndex).to.equal(6);
+      }
+      expect(reads).to.be.greaterThan(2);
+    });
+
+    it("navigates to an EPUB CFI as a FragmentSelector position", async function () {
+      gateway.addItem({
+        key: "EPUBNAV1",
+        id: 110,
+        itemType: "attachment",
+        attachmentContentType: "application/epub+zip",
+      });
+
+      const res = await service.navigate({
+        attachmentKey: "EPUBNAV1",
+        cfi: "epubcfi(/6/12!/4/2/26/1:17)",
+      });
+
+      expect(res.target.cfi).to.equal("epubcfi(/6/12!/4/2/26/1:17)");
+      const pos = gateway.openReaderCalls[0].location?.position as Record<
+        string,
+        unknown
+      >;
+      expect(pos.type).to.equal("FragmentSelector");
+      expect(pos.value).to.equal("epubcfi(/6/12!/4/2/26/1:17)");
+    });
+
+    it("rejects a CFI on a non-EPUB attachment", async function () {
+      gateway.addItem({
+        key: "PDFNAV02",
+        id: 120,
+        itemType: "attachment",
+        attachmentContentType: "application/pdf",
+      });
+
+      let error: any;
+      try {
+        await service.navigate({
+          attachmentKey: "PDFNAV02",
+          cfi: "epubcfi(/6/12!/4/2/26/1:17)",
+        });
+      } catch (e) {
+        error = e;
+      }
+      expect(error?.code).to.equal("invalid_argument");
+    });
+
+    it("navigates to an annotation belonging to the attachment", async function () {
+      const attachment = gateway.addItem({
+        key: "PDFNAV03",
+        id: 130,
+        itemType: "attachment",
+        attachmentContentType: "application/pdf",
+      });
+      const annotation = gateway.addItem({
+        key: "ANNONAV1",
+        id: 131,
+        itemType: "annotation",
+      });
+      (annotation as any).parentItemID = attachment.id;
+
+      const res = await service.navigate({
+        attachmentKey: "PDFNAV03",
+        annotationKey: "ANNONAV1",
+      });
+
+      expect(res.target.annotationKey).to.equal("ANNONAV1");
+      expect(gateway.openReaderCalls[0].location?.annotationID).to.equal(
+        "ANNONAV1",
+      );
+    });
+
+    it("settles on the annotation's own page for a PDF annotation", async function () {
+      const attachment = gateway.addItem({
+        key: "PDFNAV08",
+        id: 180,
+        itemType: "attachment",
+        attachmentContentType: "application/pdf",
+      });
+      const annotation = gateway.addItem({
+        key: "ANNONAV3",
+        id: 181,
+        itemType: "annotation",
+        parentItemID: attachment.id,
+        annotationPosition: JSON.stringify({ pageIndex: 2, rects: [] }),
+      });
+      expect(annotation.parentItemID).to.equal(attachment.id);
+
+      // The reader is already parked on a different page; navigation must move
+      // it to the annotation's page (index 2) before the state is read back.
+      gateway.activeReader = {
+        itemID: attachment.id,
+        title: "Annotated Paper",
+        type: "pdf",
+        state: { pageIndex: 7 },
+      };
+
+      const res = await service.navigate({
+        attachmentKey: "PDFNAV08",
+        annotationKey: "ANNONAV3",
+      });
+
+      expect(res.reader.open).to.equal(true);
+      if (res.reader.open) {
+        expect(res.reader.location.pageIndex).to.equal(2);
+        expect(res.reader.selection?.annotationKey).to.equal("ANNONAV3");
+      }
+    });
+
+    it("rejects an annotation that belongs to a different attachment", async function () {
+      gateway.addItem({
+        key: "PDFNAV04",
+        id: 140,
+        itemType: "attachment",
+        attachmentContentType: "application/pdf",
+      });
+      const annotation = gateway.addItem({
+        key: "ANNONAV2",
+        id: 141,
+        itemType: "annotation",
+      });
+      (annotation as any).parentItemID = 999;
+
+      let error: any;
+      try {
+        await service.navigate({
+          attachmentKey: "PDFNAV04",
+          annotationKey: "ANNONAV2",
+        });
+      } catch (e) {
+        error = e;
+      }
+      expect(error?.code).to.equal("invalid_argument");
+    });
+
+    it("requires at least one navigation target", async function () {
+      gateway.addItem({
+        key: "PDFNAV05",
+        id: 150,
+        itemType: "attachment",
+        attachmentContentType: "application/pdf",
+      });
+
+      let error: any;
+      try {
+        await service.navigate({ attachmentKey: "PDFNAV05" });
+      } catch (e) {
+        error = e;
+      }
+      expect(error?.code).to.equal("invalid_argument");
+    });
+
+    it("rejects a non-positive page", async function () {
+      gateway.addItem({
+        key: "PDFNAV06",
+        id: 160,
+        itemType: "attachment",
+        attachmentContentType: "application/pdf",
+      });
+
+      let error: any;
+      try {
+        await service.navigate({ attachmentKey: "PDFNAV06", page: 0 });
+      } catch (e) {
+        error = e;
+      }
+      expect(error?.code).to.equal("invalid_argument");
+    });
+  });
+
   it("falls back to fulltext cache for context when SDT is unavailable", async function () {
     const attachment = gateway.addItem({
       key: "PDFA0006",

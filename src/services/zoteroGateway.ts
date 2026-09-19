@@ -372,6 +372,35 @@ export interface ZoteroGateway {
 
   /** Lists all currently open readers in tabs or windows. */
   getOpenReaders(): ActiveReaderDetails[];
+
+  /**
+   * Opens an attachment in Zotero's reader, or navigates the reader already open
+   * for it. Mirrors the `zotero://open` protocol path: a `location` moves the
+   * view to a page, annotation or EPUB CFI. Resolves once the open/navigate call
+   * has been issued.
+   */
+  openReader(input: ReaderOpenInput): Promise<void>;
+}
+
+/** A reader target, shaped like Zotero's own `Reader.Location`. */
+export interface ReaderNavLocation {
+  /** 0-based PDF page index. */
+  pageIndex?: number;
+  /** Physical page label, when navigating by printed page number. */
+  pageLabel?: string;
+  /** Annotation key to scroll to and select. */
+  annotationID?: string;
+  /** Selector position, e.g. an EPUB `FragmentSelector` carrying a CFI. */
+  position?: Record<string, unknown>;
+}
+
+export interface ReaderOpenInput {
+  itemID: number;
+  location?: ReaderNavLocation;
+  /** Open without stealing focus / selecting the tab. */
+  openInBackground?: boolean;
+  /** Open in a standalone reader window rather than a tab. */
+  openInWindow?: boolean;
 }
 
 export interface ActiveReaderDetails {
@@ -2077,6 +2106,32 @@ export class RealZoteroGateway implements ZoteroGateway {
       this.log("WARN failed to get active reader", e);
       return null;
     }
+  }
+
+  public async openReader(input: ReaderOpenInput): Promise<void> {
+    const zoteroAny = Zotero as unknown as {
+      Reader?: {
+        open(
+          itemID: number,
+          location?: unknown,
+          options?: Record<string, unknown>,
+        ): Promise<unknown>;
+      };
+    };
+    if (!zoteroAny.Reader?.open) {
+      throw new Error("Zotero.Reader is unavailable.");
+    }
+
+    const location =
+      input.location && Object.keys(input.location).length
+        ? input.location
+        : null;
+
+    await zoteroAny.Reader.open(input.itemID, location, {
+      openInBackground: input.openInBackground ?? false,
+      openInWindow: input.openInWindow ?? false,
+      allowDuplicate: input.openInWindow ?? false,
+    });
   }
 
   private extractReaderDetails(

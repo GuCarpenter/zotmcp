@@ -18,15 +18,16 @@ const EXPECTED_TOOLS = Object.freeze([
   "library_update",
   "note_write",
   "paper_read",
+  "reader_navigate",
   "reader_read",
   "zotero_script",
 ]);
 
 describe("tool surface", function () {
-  it("registers exactly the thirteen planned tools", function () {
+  it("registers exactly the fourteen planned tools", function () {
     const registered = createToolRegistry().names().sort();
     expect(registered).to.deep.equal([...EXPECTED_TOOLS]);
-    expect(registered).to.have.length(13);
+    expect(registered).to.have.length(14);
   });
 
   it("keeps the canonical TOOL_NAMES list in step with the registry", function () {
@@ -60,6 +61,7 @@ describe("tool surface", function () {
       "note_write",
       "annotation_write",
       "zotero_script",
+      "reader_navigate",
     ]) {
       expect(byName.get(name)!.annotations.readOnlyHint, name).to.equal(false);
     }

@@ -7,6 +7,7 @@ import type {
   ActiveReaderDetails,
   EndpointConstructor,
   ReadableResult,
+  ReaderOpenInput,
   SdtReader,
   SearchHandle,
   ZoteroGateway,
@@ -36,6 +37,8 @@ export interface FakeItem {
   tags?: string[];
   collectionIDs?: number[];
   related?: string[];
+  parentItemID?: number;
+  annotationPosition?: string;
 }
 
 export interface FakeCollection {
@@ -194,6 +197,12 @@ export class FakeGateway implements ZoteroGateway {
       collectionIDs: item.collectionIDs ?? [],
       related: item.related ?? [],
       key: item.key,
+      ...(item.parentItemID !== undefined
+        ? { parentItemID: item.parentItemID }
+        : {}),
+      ...(item.annotationPosition !== undefined
+        ? { annotationPosition: item.annotationPosition }
+        : {}),
     };
     this.items.push(created);
     return created;
@@ -735,6 +744,54 @@ export class FakeGateway implements ZoteroGateway {
   public getOpenReaders(): ActiveReaderDetails[] {
     if (this.openReaders.length) return this.openReaders;
     return this.activeReader ? [this.activeReader] : [];
+  }
+
+  public openReaderCalls: ReaderOpenInput[] = [];
+
+  public async openReader(input: ReaderOpenInput): Promise<void> {
+    this.openReaderCalls.push(input);
+
+    // Simulate the reader moving to the requested location, so the settle poll
+    // in ReaderService sees the target take effect rather than stale state.
+    let reader =
+      this.activeReader && this.activeReader.itemID === input.itemID
+        ? this.activeReader
+        : this.openReaders.find((r) => r.itemID === input.itemID);
+    if (!reader) {
+      reader = { itemID: input.itemID, title: "", type: "pdf" };
+      this.activeReader = reader;
+    }
+
+    const loc = input.location ?? {};
+    reader.state = { ...(reader.state ?? {}) };
+    if (typeof loc.pageIndex === "number") {
+      reader.state.pageIndex = loc.pageIndex;
+    }
+    const position = loc.position as { value?: unknown } | undefined;
+    if (typeof position?.value === "string") {
+      reader.state.cfi = position.value;
+    }
+    if (typeof loc.annotationID === "string") {
+      reader.selection = {
+        type: "annotation",
+        text: `annotation ${loc.annotationID}`,
+        annotationKey: loc.annotationID,
+      };
+      // Mirror the real reader scrolling to the annotation's page (PDF).
+      const annotation = this.items.find((i) => i.key === loc.annotationID);
+      if (annotation?.annotationPosition) {
+        try {
+          const pos = JSON.parse(annotation.annotationPosition) as {
+            pageIndex?: number;
+          };
+          if (typeof pos.pageIndex === "number") {
+            reader.state.pageIndex = pos.pageIndex;
+          }
+        } catch {
+          // No page index available.
+        }
+      }
+    }
   }
 }
 

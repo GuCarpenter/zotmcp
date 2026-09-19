@@ -6,9 +6,10 @@
  * and surrounding text context.
  */
 
-import { InvalidArgumentError } from "../errors";
+import { InvalidArgumentError, NotFoundError } from "../errors";
 import {
   blocksToText,
+  EPUB_CONTENT_TYPE,
   firstPageIndex,
   flattenOutline,
   pageBlockResolver,
@@ -16,7 +17,11 @@ import {
 } from "./documentTextService";
 import type { ItemResolver } from "./itemResolver";
 import { buildItemUris } from "./uriService";
-import type { SdtNode, ZoteroGateway } from "./zoteroGateway";
+import type {
+  ReaderNavLocation,
+  SdtNode,
+  ZoteroGateway,
+} from "./zoteroGateway";
 
 export interface ReaderOptions {
   /** Optional 8-character attachment key to inspect a specific reader. */
@@ -25,6 +30,39 @@ export interface ReaderOptions {
   includeContext?: boolean;
   /** Maximum characters of surrounding context to return. Default 600. */
   contextChars?: number;
+}
+
+export interface ReaderNavigateOptions {
+  /** 8-character attachment key to open or navigate. Required. */
+  attachmentKey: unknown;
+  /** 1-based page number (PDF). */
+  page?: unknown;
+  /** Physical page label to navigate to (PDF), e.g. "iv" or "12". */
+  pageLabel?: unknown;
+  /** Annotation key to scroll to and select; its page is resolved for PDFs. */
+  annotationKey?: unknown;
+  /** EPUB CFI, e.g. `epubcfi(/6/12!/4/2/26/1:17)`. */
+  cfi?: unknown;
+  /** Open without selecting the tab or stealing focus. Default false. */
+  openInBackground?: unknown;
+  /** Open in a standalone reader window instead of a tab. Default false. */
+  openInWindow?: unknown;
+  /** Whether the returned reader state includes surrounding context. Default false. */
+  includeContext?: boolean;
+  /** Maximum characters of surrounding context to return. Default 600. */
+  contextChars?: number;
+}
+
+export interface ReaderNavigateResult {
+  navigated: true;
+  target: {
+    attachmentKey: string;
+    page?: number;
+    pageLabel?: string;
+    annotationKey?: string;
+    cfi?: string;
+  };
+  reader: ReaderResult;
 }
 
 export interface ReaderLocationInfo {
@@ -104,6 +142,21 @@ export type ReaderResult = ReaderResultOpen | ReaderResultClosed;
 
 const DEFAULT_CONTEXT_CHARS = 600;
 const MAX_CONTEXT_CHARS = 5000;
+
+/** Poll budget for a reader to report a concrete location after open/navigate. */
+const READER_SETTLE_ATTEMPTS = 40;
+const READER_SETTLE_INTERVAL_MS = 50;
+
+/** What a settled reader must show for a given navigation target. */
+interface ReaderSettleExpectation {
+  expectedPageIndex?: number;
+  expectedPageLabel?: string;
+  expectedAnnotationKey?: string;
+  expectedAnnotationPageIndex?: number;
+  expectingCfi?: boolean;
+  baselineCfi?: string;
+  baselinePageIndex?: number;
+}
 
 export class ReaderService {
   public constructor(
@@ -239,6 +292,236 @@ export class ReaderService {
       selection,
       context,
     };
+  }
+
+  /**
+   * Opens an attachment in Zotero's reader, or navigates the reader already open
+   * for it, to a page, page label, annotation or EPUB CFI. Returns the resulting
+   * reader state via {@link getOpenReader}.
+   */
+  public async navigate(
+    options: ReaderNavigateOptions,
+  ): Promise<ReaderNavigateResult> {
+    const attachment = await this.resolver.resolveAttachment(
+      options.attachmentKey,
+    );
+    // Scoped strictly to My Library, like every other resolved object.
+    this.resolver.assertUserLibraryObject(
+      "item",
+      attachment.key,
+      attachment.libraryID,
+    );
+
+    const isEpub = attachment.attachmentContentType === EPUB_CONTENT_TYPE;
+    const location: ReaderNavLocation = {};
+    const target: ReaderNavigateResult["target"] = {
+      attachmentKey: attachment.key,
+    };
+
+    const page = this.normalizeOptionalPage(options.page);
+    const pageLabel =
+      typeof options.pageLabel === "string" && options.pageLabel.trim()
+        ? options.pageLabel.trim()
+        : undefined;
+    const annotationKey =
+      typeof options.annotationKey === "string" && options.annotationKey
+        ? options.annotationKey
+        : undefined;
+    const cfi =
+      typeof options.cfi === "string" && options.cfi.trim()
+        ? options.cfi.trim()
+        : undefined;
+
+    if (
+      page === undefined &&
+      pageLabel === undefined &&
+      annotationKey === undefined &&
+      cfi === undefined
+    ) {
+      throw new InvalidArgumentError(
+        'Pass one of "page", "pageLabel", "annotationKey" or "cfi" to navigate ' +
+          "the reader, or open the attachment without a target by omitting them.",
+      );
+    }
+
+    if (cfi && !isEpub) {
+      throw new InvalidArgumentError(
+        `"cfi" only applies to EPUB attachments; "${attachment.key}" is ` +
+          `${attachment.attachmentContentType ?? "not an EPUB"}.`,
+      );
+    }
+    if (cfi && !/^epubcfi\(.*\)$/.test(cfi)) {
+      throw new InvalidArgumentError(
+        `"cfi" must be an epubcfi(...) string, got ${JSON.stringify(cfi)}.`,
+      );
+    }
+
+    if (page !== undefined) {
+      location.pageIndex = page - 1;
+      target.page = page;
+    }
+    if (pageLabel !== undefined) {
+      location.pageLabel = pageLabel;
+      target.pageLabel = pageLabel;
+    }
+    let annotationPageIndex: number | undefined;
+    if (annotationKey !== undefined) {
+      annotationPageIndex = await this.assertAnnotationOf(
+        attachment,
+        annotationKey,
+      );
+      location.annotationID = annotationKey;
+      target.annotationKey = annotationKey;
+    }
+    if (cfi !== undefined) {
+      // Same shape Zotero's own zotero://open handler builds for a CFI.
+      location.position = {
+        type: "FragmentSelector",
+        conformsTo: "http://www.idpf.org/epub/linking/cfi/epub-cfi.html",
+        value: cfi,
+      };
+      target.cfi = cfi;
+    }
+
+    // Capture where the reader sat before navigating. An already-open reader
+    // reports its previous location immediately, so a "changed from baseline"
+    // check avoids reading stale state back after a same-tab navigation.
+    const baseline = this.gateway.getActiveReader(attachment.id)?.state;
+
+    await this.gateway.openReader({
+      itemID: attachment.id,
+      location,
+      openInBackground: Boolean(options.openInBackground),
+      openInWindow: Boolean(options.openInWindow),
+    });
+
+    // Opening or navigating a reader settles asynchronously: pdf.js (or the EPUB
+    // view) needs a few frames to lay out and apply the target. Poll briefly so
+    // the returned state reflects where the reader actually landed.
+    await this.waitForReaderSettled(attachment.id, {
+      expectedPageIndex: page !== undefined ? page - 1 : undefined,
+      expectedPageLabel: pageLabel,
+      expectedAnnotationKey: annotationKey,
+      expectedAnnotationPageIndex: annotationPageIndex,
+      expectingCfi: cfi !== undefined,
+      baselineCfi: baseline?.cfi,
+      baselinePageIndex: baseline?.pageIndex,
+    });
+
+    const reader = await this.getOpenReader({
+      attachmentKey: attachment.key,
+      includeContext: options.includeContext === true,
+      contextChars: options.contextChars,
+    });
+
+    return { navigated: true, target, reader };
+  }
+
+  /**
+   * Waits, up to a short budget, for a just-opened or just-navigated reader to
+   * reach the requested target. The settle test is target-specific:
+   * - a page navigation settles once the reported `pageIndex` matches;
+   * - an annotation once that annotation becomes the reader's selection;
+   * - a CFI (which snaps to a page boundary and so rarely matches verbatim) or a
+   *   page label once the location differs from the pre-navigation baseline;
+   * - a bare open once any concrete location is reported.
+   * Returns as soon as the test passes, or after the timeout so navigation never
+   * blocks indefinitely.
+   */
+  private async waitForReaderSettled(
+    attachmentItemID: number,
+    expect: ReaderSettleExpectation,
+  ): Promise<void> {
+    for (let attempt = 0; attempt < READER_SETTLE_ATTEMPTS; attempt++) {
+      const active = this.gateway.getActiveReader(attachmentItemID);
+      if (active && this.readerReachedTarget(active, expect)) return;
+      await new Promise((resolve) =>
+        setTimeout(resolve, READER_SETTLE_INTERVAL_MS),
+      );
+    }
+  }
+
+  private readerReachedTarget(
+    active: NonNullable<ReturnType<ZoteroGateway["getActiveReader"]>>,
+    expect: ReaderSettleExpectation,
+  ): boolean {
+    const state = active.state;
+
+    if (expect.expectedAnnotationKey !== undefined) {
+      const selected =
+        active.selection?.annotationKey === expect.expectedAnnotationKey;
+      if (!selected) return false;
+      // Selection registers before the viewport finishes scrolling, so also
+      // wait for the annotation's own page when we know it (PDF).
+      if (expect.expectedAnnotationPageIndex !== undefined) {
+        return state?.pageIndex === expect.expectedAnnotationPageIndex;
+      }
+      return true;
+    }
+    if (expect.expectedPageIndex !== undefined) {
+      return state?.pageIndex === expect.expectedPageIndex;
+    }
+    if (expect.expectingCfi) {
+      return Boolean(state?.cfi) && state?.cfi !== expect.baselineCfi;
+    }
+    if (expect.expectedPageLabel !== undefined) {
+      if (active.pageLabel === expect.expectedPageLabel) return true;
+      // No cheap label→index map here, so accept any settled move instead.
+      return (
+        state?.pageIndex !== undefined &&
+        state.pageIndex !== expect.baselinePageIndex
+      );
+    }
+    // Bare open: any concrete location means the reader is ready.
+    return state?.pageIndex !== undefined || Boolean(state?.cfi);
+  }
+
+  private normalizeOptionalPage(value: unknown): number | undefined {
+    if (value === undefined || value === null) return undefined;
+    const num = Number(value);
+    if (!Number.isInteger(num) || num < 1) {
+      throw new InvalidArgumentError(
+        `"page" must be a 1-based integer, got ${JSON.stringify(value)}.`,
+      );
+    }
+    return num;
+  }
+
+  /**
+   * Verifies an annotation exists and belongs to the attachment, and returns its
+   * 0-based page index when it carries one (PDF annotations). Undefined for EPUB
+   * or snapshot annotations, whose position is a selector rather than a page.
+   */
+  private async assertAnnotationOf(
+    attachment: Zotero.Item,
+    annotationKey: string,
+  ): Promise<number | undefined> {
+    this.resolver.assertKeyShape("annotation", annotationKey);
+    const annotation = await this.gateway.getItemByKey(
+      this.gateway.userLibraryID,
+      annotationKey,
+    );
+    if (!annotation || !annotation.isAnnotation?.()) {
+      throw new NotFoundError("annotation", annotationKey);
+    }
+    if (annotation.parentItemID !== attachment.id) {
+      throw new InvalidArgumentError(
+        `Annotation "${annotationKey}" does not belong to attachment ` +
+          `"${attachment.key}".`,
+      );
+    }
+
+    const raw = (annotation as { annotationPosition?: unknown })
+      .annotationPosition;
+    if (typeof raw === "string" && raw) {
+      try {
+        const pos = JSON.parse(raw) as { pageIndex?: unknown };
+        if (typeof pos.pageIndex === "number") return pos.pageIndex;
+      } catch {
+        // A non-JSON or selector-based position has no page index.
+      }
+    }
+    return undefined;
   }
 
   private normalizeContextChars(value: unknown): number {
