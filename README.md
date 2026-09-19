@@ -74,6 +74,19 @@ from the code without failing a test.
 Plus three MCP resources: `zotero://collections`,
 `zotero://items/{itemKey}`, `zotero://collections/{collectionKey}/items`.
 
+## Firefox clipper
+
+[`firefox-clipper/`](firefox-clipper/) is a companion Firefox extension that
+saves the current tab into Zotero as a clean webpage snapshot. It POSTs a single
+`library_import` call (`kind: "url"`) to this endpoint; Zotero then loads the
+page in a hidden browser, extracts the readable article with Defuddle, and
+stores a self-contained HTML snapshot with images embedded for offline reading.
+
+The release workflow signs it through Mozilla's AMO API and attaches
+`zotmcp-clipper-<version>.xpi` to the GitHub release for permanent install; it
+can also be loaded temporarily via `about:debugging`. See
+[`firefox-clipper/README.md`](firefox-clipper/README.md) for install and usage.
+
 ## Scope
 
 My Library only — group libraries are refused rather than silently mixed in.
