@@ -414,7 +414,7 @@ describe("read tools", function () {
         error = e;
       }
       expect(error?.code).to.equal("invalid_argument");
-      expect(error.message).to.include("fulltext, pages or sections");
+      expect(error.message).to.include("fulltext, pages, sections or clean");
     });
 
     it("requires an attachment, not a regular item", async function () {

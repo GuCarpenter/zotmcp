@@ -51,9 +51,17 @@ export async function libraryImport(
       return jsonResult(
         await ctx.imports.manual(args.items, args.collectionKey),
       );
+    case "url":
+      return jsonResult(
+        await ctx.imports.fromUrl(
+          args.url,
+          args.collectionKey,
+          args.embedImages !== false,
+        ),
+      );
     default:
       throw new InvalidArgumentError(
-        `Unknown kind ${JSON.stringify(kind)}: expected identifiers, files or manual.`,
+        `Unknown kind ${JSON.stringify(kind)}: expected identifiers, files, manual or url.`,
       );
   }
 }

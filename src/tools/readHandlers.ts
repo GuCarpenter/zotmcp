@@ -68,7 +68,12 @@ export async function librarySearch(
             : undefined,
         uri: { select: buildCollectionSelectUri(collection.key) },
       }));
-    return jsonResult({ entity, total: matched.length, collections: matched });
+    return jsonResult({
+      entity,
+      total: matched.length,
+      selectedKey: ctx.gateway.getSelectedCollectionKey(),
+      collections: matched,
+    });
   }
 
   if (entity === "tags") {
@@ -219,9 +224,13 @@ export async function paperRead(
       });
       return jsonResult({ attachmentKey: attachment.key, mode, ...result });
     }
+    case "clean": {
+      const result = await ctx.documents.clean(attachment, maxChars);
+      return jsonResult({ attachmentKey: attachment.key, mode, ...result });
+    }
     default:
       throw new InvalidArgumentError(
-        `Unknown mode ${JSON.stringify(mode)}: expected fulltext, pages or sections.`,
+        `Unknown mode ${JSON.stringify(mode)}: expected fulltext, pages, sections or clean.`,
       );
   }
 }

@@ -42,3 +42,39 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run release -- --yes
+
+      # The Firefox clipper is a plain unpacked extension. Sign it through
+      # Mozilla's AMO API (self-distribution / unlisted channel) so the produced
+      # .xpi installs in normal Firefox, then attach it to the same release that
+      # `npm run release` just created for this tag. When AMO credentials are not
+      # configured, fall back to an unsigned zip so the release still carries the
+      # extension source.
+      - name: Package the Firefox clipper
+        id: clipper
+        env:
+          WEB_EXT_API_KEY: ${{ secrets.AMO_API_KEY }}
+          WEB_EXT_API_SECRET: ${{ secrets.AMO_API_SECRET }}
+          ARTIFACT: zotmcp-clipper-${{ github.ref_name }}.xpi
+        run: |
+          set -euo pipefail
+          if [ -n "${WEB_EXT_API_KEY:-}" ] && [ -n "${WEB_EXT_API_SECRET:-}" ]; then
+            npx --yes web-ext sign \
+              --source-dir firefox-clipper \
+              --channel unlisted \
+              --api-key "$WEB_EXT_API_KEY" \
+              --api-secret "$WEB_EXT_API_SECRET" \
+              --artifacts-dir web-ext-artifacts
+            cp "$(ls web-ext-artifacts/*.xpi | head -n1)" "$ARTIFACT"
+          else
+            echo "AMO credentials not set; packaging an unsigned .xpi."
+            (cd firefox-clipper && zip -r -FS "../$ARTIFACT" . -x "*.DS_Store")
+          fi
+          echo "artifact=$ARTIFACT" >> "$GITHUB_OUTPUT"
+
+      - name: Attach the clipper to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.ref_name }}" \
+            "${{ steps.clipper.outputs.artifact }}" --clobber
+

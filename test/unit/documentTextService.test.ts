@@ -301,6 +301,59 @@ describe("documentTextService", function () {
     });
   });
 
+  describe("clean", function () {
+    it("extracts a snapshot as Markdown with metadata", async function () {
+      gateway.attachmentPath = "/home/u/Zotero/storage/AAA/page.html";
+      gateway.cacheText = "<html><body><article>hi</article></body></html>";
+      gateway.readableResult = {
+        html: "<h1>Clean Title</h1><p>Body</p>",
+        markdown: "# Clean Title\n\nBody",
+        title: "Clean Title",
+        author: "Jane",
+        published: "2026",
+        description: "desc",
+        wordCount: 2,
+      };
+
+      const result = await service.clean(attachment(gateway, "text/html"));
+
+      expect(result.source).to.equal("defuddle");
+      expect(result.markdown).to.equal("# Clean Title\n\nBody");
+      expect(result.title).to.equal("Clean Title");
+      expect(result.author).to.equal("Jane");
+      expect(result.truncated).to.equal(false);
+      expect(gateway.extractReadableCalls[0].html).to.equal(gateway.cacheText);
+    });
+
+    it("caps the Markdown and reports truncation", async function () {
+      gateway.readableResult = {
+        html: "",
+        markdown: "y".repeat(500),
+        title: "",
+        author: "",
+        published: "",
+        description: "",
+        wordCount: 0,
+      };
+
+      const result = await service.clean(attachment(gateway, "text/html"), 100);
+
+      expect(result.markdown).to.have.length(100);
+      expect(result.truncated).to.equal(true);
+      expect(result.totalChars).to.equal(500);
+    });
+
+    it("refuses a PDF, since Defuddle extracts web snapshots", async function () {
+      let error: any;
+      try {
+        await service.clean(attachment(gateway, "application/pdf"));
+      } catch (e) {
+        error = e;
+      }
+      expect(error?.code).to.equal("unsupported_attachment");
+    });
+  });
+
   describe("fulltext", function () {
     it("reads from the SDT pack when available", async function () {
       gateway.sdtReader = fakeReader([heading("Title"), paragraph("Body")]);

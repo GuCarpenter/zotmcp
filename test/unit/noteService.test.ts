@@ -99,6 +99,16 @@ describe("noteService", function () {
       const html = '<p><img src="https://x.test/a.png" alt="a"></p>';
       expect(noteHtmlToMarkdown(html)).to.equal("![a](https://x.test/a.png)");
     });
+
+    it("converts MathML with data-latex into inline and block LaTeX", function () {
+      const inline =
+        '<p>see <math data-latex="\\rho_i" display="inline"><mi>x</mi></math> here</p>';
+      expect(noteHtmlToMarkdown(inline)).to.equal("see $\\rho_i$ here");
+
+      const block =
+        '<math data-latex="a = b" display="block"><mi>a</mi></math>';
+      expect(noteHtmlToMarkdown(block)).to.equal("$$\na = b\n$$");
+    });
   });
 
   describe("create", function () {

@@ -136,14 +136,16 @@ const specs: ToolSpec[] = [
       "whole document, 'pages' for a 1-based page range, 'sections' for text by " +
       "document section with titles, levels and start pages. Sections can be " +
       "selected by title so a late section costs nothing for the earlier ones. " +
-      "Output is capped and reports truncation.",
+      "'clean' extracts the readable article from a web snapshot (HTML) as " +
+      "Markdown, dropping navigation and boilerplate and converting math to " +
+      "LaTeX. Output is capped and reports truncation.",
     mutability: "read",
     inputSchema: OBJECT_SCHEMA(
       {
         attachmentKey: ITEM_KEY,
         mode: {
           type: "string",
-          enum: ["fulltext", "pages", "sections"],
+          enum: ["fulltext", "pages", "sections", "clean"],
           description: "Default 'fulltext'.",
         },
         pages: {
@@ -276,22 +278,39 @@ const specs: ToolSpec[] = [
     name: "library_import",
     description:
       "Add items to My Library. 'identifiers' resolves DOI, ISBN, arXiv ID, " +
-      "PMID or URL through Zotero's translators; 'files' attaches a local file " +
-      "to a parent item; 'manual' creates an item from explicit fields.",
+      "PMID or a translator-backed URL through Zotero's translators; 'url' " +
+      "saves a regular web page as a clean webpage item, extracting the " +
+      "readable article and storing a self-contained HTML snapshot with images " +
+      "inlined; 'files' attaches a local file to a parent item (a Markdown " +
+      "file is rendered to a themed HTML snapshot instead of attached " +
+      "verbatim); 'manual' creates an item from explicit fields.",
     mutability: "write",
     inputSchema: OBJECT_SCHEMA(
       {
         kind: {
           type: "string",
-          enum: ["identifiers", "files", "manual"],
+          enum: ["identifiers", "url", "files", "manual"],
         },
         identifiers: { type: "array", items: { type: "string" } },
+        url: {
+          type: "string",
+          description:
+            "For kind 'url': the absolute http(s) page URL to save cleanly.",
+        },
+        embedImages: {
+          type: "boolean",
+          description:
+            "For kind 'url': inline the article's images as data URIs so the " +
+            "snapshot reads offline. Default true.",
+        },
         filePaths: { type: "array", items: { type: "string" } },
         items: { type: "array", items: { type: "object" } },
         parentItemKey: ITEM_KEY,
         collectionKey: {
           type: "string",
-          description: "Optional collection to file new items into.",
+          description:
+            "Collection to file new items into. When omitted, the collection " +
+            "currently open in Zotero is used, if any.",
         },
       },
       ["kind"],

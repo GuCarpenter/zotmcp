@@ -183,6 +183,27 @@ export class ImportService {
     private readonly mutations: MutationService,
   ) {}
 
+  /**
+   * Resolves the collection to file new items into. An explicit key wins; when
+   * omitted, the collection currently open in Zotero is used, so an import
+   * lands where the user is looking rather than loose in My Library.
+   */
+  private async resolveTargetCollection(
+    collectionKey: unknown,
+  ): Promise<Zotero.Collection | null> {
+    if (collectionKey) {
+      return this.resolver.resolveCollection(collectionKey);
+    }
+    const openKey = this.gateway.getSelectedCollectionKey();
+    if (!openKey) return null;
+    try {
+      return await this.resolver.resolveCollection(openKey);
+    } catch {
+      // The open view may not be a collection (e.g. My Library root or a feed).
+      return null;
+    }
+  }
+
   public async byIdentifiers(
     identifiers: unknown,
     collectionKey?: unknown,
@@ -198,9 +219,7 @@ export class ImportService {
       );
     }
 
-    const collection = collectionKey
-      ? await this.resolver.resolveCollection(collectionKey)
-      : null;
+    const collection = await this.resolveTargetCollection(collectionKey);
 
     return this.mutations.enqueue("import identifiers", async () => {
       const created: Record<string, unknown>[] = [];
@@ -238,6 +257,92 @@ export class ImportService {
     });
   }
 
+  /**
+   * Saves a regular web page as a clean webpage item. The page is fetched,
+   * Defuddle extracts the readable article, and a self-contained HTML snapshot
+   * is stored — with images inlined as data URIs so it reads offline unless
+   * `embedImages` is false. Use this for pages Zotero has no translator for;
+   * `byIdentifiers` still handles DOIs, arXiv IDs and translator-backed URLs.
+   */
+  public async fromUrl(
+    url: unknown,
+    collectionKey?: unknown,
+    embedImages = true,
+  ): Promise<Record<string, unknown>> {
+    const pageUrl = String(url ?? "").trim();
+    if (!/^https?:\/\//i.test(pageUrl)) {
+      throw new InvalidArgumentError(
+        "Provide an absolute http(s) URL to import as a web page.",
+      );
+    }
+
+    const collection = await this.resolveTargetCollection(collectionKey);
+
+    return this.mutations.enqueue("import url", async () => {
+      const html = await this.gateway.fetchText(pageUrl);
+      const readable = await this.gateway.extractReadable(html, pageUrl);
+      if (!readable.html) {
+        throw new InvalidArgumentError(
+          `No readable article could be extracted from "${pageUrl}".`,
+        );
+      }
+
+      let content = readable.html;
+      let embeddedImages = 0;
+      if (embedImages) {
+        const inlined = await embedImagesAsDataUris(
+          content,
+          pageUrl,
+          this.gateway,
+        );
+        content = inlined.html;
+        embeddedImages = inlined.count;
+      }
+
+      const title = readable.title || pageUrl;
+      const fields: Record<string, unknown> = {
+        ...(readable.description ? { abstractNote: readable.description } : {}),
+        ...(readable.published ? { date: readable.published } : {}),
+      };
+      const creators = readable.author
+        ? [{ creatorType: "author", lastName: readable.author, fieldMode: 1 }]
+        : undefined;
+
+      const { itemKey, attachmentKey } = await this.gateway.saveWebpageSnapshot(
+        {
+          url: pageUrl,
+          title,
+          snapshotContent: content,
+          fields,
+          creators,
+          collectionIDs: collection ? [collection.id] : [],
+        },
+      );
+
+      return {
+        created: [
+          {
+            key: itemKey,
+            itemType: "webpage",
+            title,
+            uri: buildItemUris({ key: itemKey, isAttachment: false }),
+            snapshot: {
+              key: attachmentKey,
+              embeddedImages,
+              uri: buildItemUris({
+                key: attachmentKey,
+                isAttachment: true,
+                contentType: "text/html",
+              }),
+            },
+          },
+        ],
+        ...(collection ? { collectionKey: collection.key } : {}),
+        note: NOT_UNDOABLE_CREATE,
+      };
+    });
+  }
+
   public async fromFiles(
     filePaths: unknown,
     parentItemKey: unknown,
@@ -264,6 +369,28 @@ export class ImportService {
     return this.mutations.enqueue("import files", async () => {
       const created: Record<string, unknown>[] = [];
       for (const path of paths) {
+        // A Markdown file is rendered to a themed HTML snapshot rather than
+        // attached verbatim, so it reads like the web captures do.
+        if (isMarkdownPath(path)) {
+          const attachment = await this.gateway.importMarkdownSnapshot({
+            path,
+            parentItemID: parent.id,
+            title: fileBaseName(path),
+          });
+          created.push({
+            key: attachment.key,
+            contentType: attachment.attachmentContentType ?? "text/html",
+            linkMode: "imported_url",
+            renderedFrom: "markdown",
+            uri: buildItemUris({
+              key: attachment.key,
+              isAttachment: true,
+              contentType: attachment.attachmentContentType,
+            }),
+          });
+          continue;
+        }
+
         const attachment = await this.gateway.importFile({
           path,
           parentItemID: parent.id,
@@ -294,9 +421,7 @@ export class ImportService {
       );
     }
 
-    const collection = collectionKey
-      ? await this.resolver.resolveCollection(collectionKey)
-      : null;
+    const collection = await this.resolveTargetCollection(collectionKey);
 
     return this.mutations.enqueue("import manual", async () => {
       const created: Record<string, unknown>[] = [];
@@ -502,4 +627,63 @@ function requireName(value: unknown): string {
     throw new InvalidArgumentError('"name" is required and cannot be blank.');
   }
   return name;
+}
+
+function isMarkdownPath(path: string): boolean {
+  return /\.(md|markdown|mdown|mkd|mkdn)$/i.test(path);
+}
+
+/** The file name without its directory or extension, for a snapshot title. */
+function fileBaseName(path: string): string {
+  const name = path.split(/[\\/]/).pop() ?? path;
+  return name.replace(/\.[^.]+$/, "") || name;
+}
+
+/**
+ * Inlines a clean article's images as data URIs so its snapshot reads offline.
+ * Each distinct image is fetched once through the gateway; a fetch that fails
+ * or is not an image leaves the original src untouched. Returns the rewritten
+ * HTML and the number of images embedded.
+ */
+async function embedImagesAsDataUris(
+  html: string,
+  baseUrl: string,
+  gateway: ZoteroGateway,
+): Promise<{ html: string; count: number }> {
+  const sources = new Set<string>();
+  const srcAttr = /<img\b[^>]*?\bsrc="([^"]+)"[^>]*>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = srcAttr.exec(html))) {
+    const src = match[1];
+    if (src && !src.startsWith("data:")) sources.add(src);
+  }
+
+  const replacements = new Map<string, string>();
+  for (const src of sources) {
+    const absolute = resolveUrl(src, baseUrl);
+    if (!absolute) continue;
+    const dataUri = await gateway.fetchDataUri(absolute);
+    if (dataUri) replacements.set(src, dataUri);
+  }
+
+  let count = 0;
+  const rewritten = html.replace(
+    /(<img\b[^>]*?\bsrc=")([^"]+)(")/gi,
+    (whole, prefix: string, src: string, suffix: string) => {
+      const dataUri = replacements.get(src);
+      if (!dataUri) return whole;
+      count += 1;
+      return `${prefix}${dataUri}${suffix}`;
+    },
+  );
+
+  return { html: rewritten, count };
+}
+
+function resolveUrl(src: string, baseUrl: string): string | null {
+  try {
+    return new URL(src, baseUrl).href;
+  } catch {
+    return null;
+  }
 }

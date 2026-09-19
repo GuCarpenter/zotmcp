@@ -6,6 +6,7 @@
 import type {
   ActiveReaderDetails,
   EndpointConstructor,
+  ReadableResult,
   SdtReader,
   SearchHandle,
   ZoteroGateway,
@@ -241,6 +242,12 @@ export class FakeGateway implements ZoteroGateway {
     return this.collections as unknown as Zotero.Collection[];
   }
 
+  public selectedCollectionKey: string | null = null;
+
+  public getSelectedCollectionKey(): string | null {
+    return this.selectedCollectionKey;
+  }
+
   public async getAllTags(
     _libraryID: number,
   ): Promise<{ tag: string; type: number }[]> {
@@ -458,6 +465,83 @@ export class FakeGateway implements ZoteroGateway {
 
   public async readTextFile(_path: string): Promise<string> {
     return this.cacheText;
+  }
+
+  public readableResult: ReadableResult = {
+    html: "<h1>Clean</h1>",
+    markdown: "# Clean",
+    title: "Clean",
+    author: "",
+    published: "",
+    description: "",
+    wordCount: 1,
+  };
+  public extractReadableCalls: { html: string; url: string }[] = [];
+
+  public async extractReadable(
+    html: string,
+    url: string,
+  ): Promise<ReadableResult> {
+    this.extractReadableCalls.push({ html, url });
+    return this.readableResult;
+  }
+
+  public fetchTextResult = "<html><body><article>page</article></body></html>";
+  public fetchedUrls: string[] = [];
+  public dataUriByUrl = new Map<string, string | null>();
+  public savedWebpages: {
+    url: string;
+    title: string;
+    snapshotContent: string;
+    fields?: Record<string, unknown>;
+    creators?: unknown[];
+    collectionIDs?: number[];
+  }[] = [];
+
+  public async fetchText(url: string): Promise<string> {
+    this.fetchedUrls.push(url);
+    return this.fetchTextResult;
+  }
+
+  public async fetchDataUri(url: string): Promise<string | null> {
+    return this.dataUriByUrl.has(url)
+      ? (this.dataUriByUrl.get(url) ?? null)
+      : `data:image/png;base64,AAAA`;
+  }
+
+  public async saveWebpageSnapshot(input: {
+    url: string;
+    title: string;
+    snapshotContent: string;
+    fields?: Record<string, unknown>;
+    creators?: unknown[];
+    collectionIDs?: number[];
+  }): Promise<{ itemKey: string; attachmentKey: string }> {
+    this.savedWebpages.push(input);
+    return {
+      itemKey: this.generateObjectKey(),
+      attachmentKey: this.generateObjectKey(),
+    };
+  }
+
+  public markdownSnapshots: {
+    path: string;
+    parentItemID: number;
+    title: string;
+  }[] = [];
+
+  public async importMarkdownSnapshot(input: {
+    path: string;
+    parentItemID: number;
+    title: string;
+  }): Promise<Zotero.Item> {
+    this.markdownSnapshots.push(input);
+    const created = this.addItem({
+      key: this.generateObjectKey(),
+      itemType: "attachment",
+      attachmentContentType: "text/html",
+    });
+    return created as unknown as Zotero.Item;
   }
 
   public async readBinaryFileAsBase64(

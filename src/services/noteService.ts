@@ -60,6 +60,19 @@ export function noteHtmlToMarkdown(html: string): string {
     },
   );
 
+  // MathML carrying a data-latex attribute (Defuddle's clean article HTML) is
+  // turned into LaTeX: display="block" becomes a $$…$$ block, otherwise inline
+  // $…$. Done before the MathML element markup is stripped as generic tags.
+  s = s.replace(/<math\b([^>]*)>[\s\S]*?<\/math>/gi, (_m, attrs: string) => {
+    const latex = decodeEntities(
+      /\bdata-latex="([^"]*)"/i.exec(attrs)?.[1] ?? "",
+    ).trim();
+    if (!latex) return "";
+    return /display\s*=\s*"block"/i.test(attrs)
+      ? `\n\n$$\n${latex}\n$$\n\n`
+      : `$${latex}$`;
+  });
+
   s = s.replace(
     /<table\b[^>]*>([\s\S]*?)<\/table>/gi,
     (_m, body: string) => "\n" + tableToMarkdown(body) + "\n",

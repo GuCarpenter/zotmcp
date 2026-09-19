@@ -16,6 +16,7 @@
  */
 
 import {
+  FileMissingError,
   InvalidArgumentError,
   NoTextLayerError,
   UnsupportedAttachmentError,
@@ -43,6 +44,18 @@ export interface TextResult {
   truncated: boolean;
   totalChars: number;
   note?: string;
+}
+
+export interface CleanResult {
+  markdown: string;
+  source: "defuddle";
+  truncated: boolean;
+  totalChars: number;
+  title?: string;
+  author?: string;
+  published?: string;
+  description?: string;
+  wordCount?: number;
 }
 
 export interface PageResult {
@@ -145,6 +158,22 @@ export function blocksToText(blocks: SdtNode[]): string {
     .map((block) => blockText(block).trim())
     .filter(Boolean)
     .join("\n\n");
+}
+
+/**
+ * The source URL for a snapshot, needed to resolve relative links and images.
+ * A snapshot attachment carries the page URL in its own `url` field; the parent
+ * item's `url` is the fallback. Empty when neither is set.
+ */
+function snapshotUrl(attachment: Zotero.Item): string {
+  const read = (item: Zotero.Item | null | undefined): string => {
+    try {
+      return item ? String(item.getField("url" as never) ?? "") : "";
+    } catch {
+      return "";
+    }
+  };
+  return read(attachment) || read(attachment.parentItem) || "";
 }
 
 /**
@@ -396,6 +425,56 @@ export class DocumentTextService {
     }
 
     return this.fallbackText(attachment, maxChars);
+  }
+
+  /** True for a web snapshot: the only attachment Defuddle can extract. */
+  public isSnapshot(attachment: Zotero.Item): boolean {
+    return SNAPSHOT_CONTENT_TYPES.includes(
+      attachment.attachmentContentType ?? "",
+    );
+  }
+
+  /**
+   * Extracts the readable article from a web snapshot and returns it as
+   * Markdown (math converted to LaTeX), plus the article metadata. This is the
+   * clean counterpart to fullText, whose SDT text keeps the page's navigation
+   * and boilerplate.
+   */
+  public async clean(
+    attachment: Zotero.Item,
+    maxChars = DEFAULT_MAX_CHARS,
+  ): Promise<CleanResult> {
+    if (!this.isSnapshot(attachment)) {
+      throw new UnsupportedAttachmentError(
+        attachment.key,
+        attachment.attachmentContentType ?? null,
+        "a web snapshot (HTML) attachment",
+      );
+    }
+
+    const path = await this.gateway.getAttachmentPath(attachment);
+    if (!path) throw new FileMissingError(attachment.key, null);
+
+    const html = await this.gateway.readTextFile(path);
+    const readable = await this.gateway.extractReadable(
+      html,
+      snapshotUrl(attachment),
+    );
+
+    const markdown = readable.markdown;
+    const truncated = markdown.length > maxChars;
+
+    return {
+      markdown: truncated ? markdown.slice(0, maxChars) : markdown,
+      source: "defuddle",
+      truncated,
+      totalChars: markdown.length,
+      ...(readable.title ? { title: readable.title } : {}),
+      ...(readable.author ? { author: readable.author } : {}),
+      ...(readable.published ? { published: readable.published } : {}),
+      ...(readable.description ? { description: readable.description } : {}),
+      ...(readable.wordCount ? { wordCount: readable.wordCount } : {}),
+    };
   }
 
   public async pages(

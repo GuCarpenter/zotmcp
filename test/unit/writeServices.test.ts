@@ -372,6 +372,25 @@ describe("write services", function () {
       expect((result.failed as any[])[0].identifier).to.equal("bad");
     });
 
+    it("falls back to the open collection when no key is given", async function () {
+      gateway.addCollection({ key: "OPEN0001", id: 9 });
+      gateway.selectedCollectionKey = "OPEN0001";
+
+      const result = await imports.byIdentifiers(["10.1000/xyz"]);
+
+      expect(gateway.importedIdentifiers[0].collectionIDs).to.deep.equal([9]);
+      expect(result.collectionKey).to.equal("OPEN0001");
+    });
+
+    it("files loose in the library when no collection is open", async function () {
+      gateway.selectedCollectionKey = null;
+
+      const result = await imports.byIdentifiers(["10.1000/xyz"]);
+
+      expect(gateway.importedIdentifiers[0].collectionIDs).to.deep.equal([]);
+      expect(result.collectionKey).to.equal(undefined);
+    });
+
     it("attaches a file to a regular item", async function () {
       gateway.addItem({ key: "ABCD1234", id: 1 });
 
@@ -390,6 +409,106 @@ describe("write services", function () {
       let error: any;
       try {
         await imports.fromFiles(["/tmp/x.pdf"], "NOTE0001", false);
+      } catch (e) {
+        error = e;
+      }
+      expect(error?.code).to.equal("invalid_argument");
+    });
+
+    it("renders a Markdown file to a themed HTML snapshot", async function () {
+      gateway.addItem({ key: "ABCD1234", id: 1 });
+
+      const result = await imports.fromFiles(
+        ["/tmp/notes/My Paper.md"],
+        "ABCD1234",
+        false,
+      );
+
+      expect(gateway.markdownSnapshots[0].path).to.equal(
+        "/tmp/notes/My Paper.md",
+      );
+      expect(gateway.markdownSnapshots[0].title).to.equal("My Paper");
+      const created = (result.created as any[])[0];
+      expect(created.renderedFrom).to.equal("markdown");
+      expect(created.contentType).to.equal("text/html");
+      // A plain file must still take the verbatim import path.
+      expect(gateway.importedFiles.length).to.equal(0);
+    });
+
+    it("saves a clean webpage snapshot from a URL and embeds images", async function () {
+      gateway.readableResult = {
+        html: '<h1>Post</h1><p>Body</p><img src="/img/a.png">',
+        markdown: "# Post",
+        title: "Post",
+        author: "Su",
+        published: "2026",
+        description: "A post",
+        wordCount: 2,
+      };
+
+      const result = await imports.fromUrl("https://example.com/post");
+
+      const created = (result.created as any[])[0];
+      expect(created.itemType).to.equal("webpage");
+      expect(created.title).to.equal("Post");
+      expect(created.snapshot.embeddedImages).to.equal(1);
+
+      const saved = gateway.savedWebpages[0];
+      expect(saved.url).to.equal("https://example.com/post");
+      expect(saved.fields?.abstractNote).to.equal("A post");
+      expect(saved.fields?.date).to.equal("2026");
+      expect((saved.creators as any[])[0].lastName).to.equal("Su");
+      // The relative image src was resolved and inlined as a data URI.
+      expect(saved.snapshotContent).to.include("data:image/png;base64,");
+      expect(saved.snapshotContent).to.not.include('src="/img/a.png"');
+    });
+
+    it("skips image embedding when embedImages is false", async function () {
+      gateway.readableResult = {
+        html: '<p><img src="https://x.test/a.png"></p>',
+        markdown: "",
+        title: "T",
+        author: "",
+        published: "",
+        description: "",
+        wordCount: 0,
+      };
+
+      const result = await imports.fromUrl(
+        "https://example.com/p",
+        undefined,
+        false,
+      );
+
+      expect((result.created as any[])[0].snapshot.embeddedImages).to.equal(0);
+      expect(gateway.savedWebpages[0].snapshotContent).to.include(
+        'src="https://x.test/a.png"',
+      );
+    });
+
+    it("rejects a non-http URL", async function () {
+      let error: any;
+      try {
+        await imports.fromUrl("ftp://example.com/x");
+      } catch (e) {
+        error = e;
+      }
+      expect(error?.code).to.equal("invalid_argument");
+    });
+
+    it("fails when no readable article can be extracted", async function () {
+      gateway.readableResult = {
+        html: "",
+        markdown: "",
+        title: "",
+        author: "",
+        published: "",
+        description: "",
+        wordCount: 0,
+      };
+      let error: any;
+      try {
+        await imports.fromUrl("https://example.com/empty");
       } catch (e) {
         error = e;
       }

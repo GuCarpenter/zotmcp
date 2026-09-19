@@ -6,6 +6,7 @@ export default zotero({
       ignores: [
         ".scaffold/**",
         "node_modules/**",
+        "firefox-clipper/**",
         "typings/i10n.d.ts",
         "typings/prefs.d.ts",
       ],

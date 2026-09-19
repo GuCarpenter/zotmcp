@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "Zotmcp Clipper",
+  "version": "0.5.0",
+  "description": "Save the current page into Zotero as a clean webpage snapshot via the zotmcp import API.",
+  "permissions": ["tabs", "notifications", "storage"],
+  "host_permissions": ["http://127.0.0.1/*", "http://localhost/*"],
+  "icons": {
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "96": "icons/icon-96.png"
+  },
+  "action": {
+    "default_title": "Save to Zotero (zotmcp)",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "96": "icons/icon-96.png"
+    }
+  },
+  "browser_specific_settings": {
+    "gecko": { "id": "zotmcp-clipper@local", "strict_min_version": "115.0" }
+  }
+}

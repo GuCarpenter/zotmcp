@@ -7,10 +7,44 @@
  */
 
 import type { CfiDomNode, EpubSpine } from "./epubCfi";
+import Defuddle from "defuddle/full";
+import { parseHTML } from "linkedom";
+import * as temmlModule from "temml";
+import { extractFrontMatter, frontMatterToMetadata } from "./frontMatter";
+import { markdownToNoteHtml, noteHtmlToMarkdown } from "./noteService";
 import { config } from "../../package.json";
+
+// Temml ships a default-only ESM bundle; unwrap it to the render API.
+const temml = ((temmlModule as { default?: unknown }).default ??
+  temmlModule) as {
+  renderToString(
+    latex: string,
+    options?: { displayMode?: boolean; throwOnError?: boolean },
+  ): string;
+};
 
 /** Zotero's default connector-server port. */
 export const DEFAULT_HTTP_PORT = 23119;
+
+/** A current desktop-Firefox User-Agent, sent when fetching pages to import. */
+const BROWSER_USER_AGENT =
+  "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0";
+
+/** How long to let a page's client-side scripts (e.g. MathJax) settle. */
+const RENDER_SETTLE_MS = 4000;
+
+/** The readable article Defuddle extracts from a full HTML page. */
+export interface ReadableResult {
+  /** Clean article HTML, chrome and boilerplate removed. */
+  html: string;
+  /** Markdown rendering of the clean HTML, math converted to LaTeX. */
+  markdown: string;
+  title: string;
+  author: string;
+  published: string;
+  description: string;
+  wordCount: number;
+}
 
 export interface ZoteroGateway {
   /** My Library's numeric ID. All operations are scoped to it (spec LB-1). */
@@ -33,6 +67,10 @@ export interface ZoteroGateway {
     libraryID: number,
     recursive: boolean,
   ): Zotero.Collection[];
+
+  /** Key of the collection currently selected in the main window, if any. */
+  getSelectedCollectionKey(): string | null;
+
   getAllTags(libraryID: number): Promise<{ tag: string; type: number }[]>;
 
   /** A fresh `Zotero.Search` already scoped to the given library. */
@@ -92,6 +130,39 @@ export interface ZoteroGateway {
     collectionIDs?: number[];
   }): Promise<Zotero.Item>;
 
+  /** Fetches a URL as text over Zotero's HTTP stack (cookies, redirects). */
+  fetchText(url: string): Promise<string>;
+
+  /**
+   * Fetches a binary resource (e.g. an image) and returns it as a `data:` URI,
+   * or null when the request fails or the type is not an image. Used to inline
+   * a clean snapshot's images so it reads offline.
+   */
+  fetchDataUri(url: string): Promise<string | null>;
+
+  /**
+   * Creates a webpage item with a self-contained HTML snapshot attachment from
+   * already-extracted content. Returns both new keys.
+   */
+  saveWebpageSnapshot(input: {
+    url: string;
+    title: string;
+    snapshotContent: string;
+    fields?: Record<string, unknown>;
+    creators?: unknown[];
+    collectionIDs?: number[];
+  }): Promise<{ itemKey: string; attachmentKey: string }>;
+
+  /**
+   * Renders a local Markdown file to a themed HTML snapshot and attaches it to
+   * the given item, so Markdown reads like the plugin's web captures.
+   */
+  importMarkdownSnapshot(input: {
+    path: string;
+    parentItemID: number;
+    title: string;
+  }): Promise<Zotero.Item>;
+
   /** Valid field names for an item type, for validation and error messages. */
   getFieldsForItemType(itemType: string): string[];
   isValidItemType(itemType: string): boolean;
@@ -148,6 +219,14 @@ export interface ZoteroGateway {
     saveOptions?: Record<string, unknown>,
   ): Promise<void>;
   readTextFile(path: string, maxLength?: number): Promise<string>;
+
+  /**
+   * Extracts the readable article from a full HTML page, discarding chrome,
+   * ads and navigation. Returns clean article HTML, its Markdown rendering
+   * (math converted to LaTeX) and the article metadata. Privileged: it parses
+   * HTML with a DOM and runs the bundled Defuddle extractor, so it lives here.
+   */
+  extractReadable(html: string, url: string): Promise<ReadableResult>;
 
   /**
    * Reads a file's raw bytes and returns them base64-encoded, or null when the
@@ -434,6 +513,23 @@ export class RealZoteroGateway implements ZoteroGateway {
     return Zotero.Collections.getByLibrary(libraryID, recursive);
   }
 
+  public getSelectedCollectionKey(): string | null {
+    try {
+      const win = (
+        Zotero as unknown as { getMainWindow?(): Window | undefined }
+      ).getMainWindow?.();
+      const pane = (
+        win as unknown as {
+          ZoteroPane?: { getSelectedCollection?(): { key?: string } | false };
+        }
+      )?.ZoteroPane;
+      const collection = pane?.getSelectedCollection?.();
+      return collection && collection.key ? collection.key : null;
+    } catch {
+      return null;
+    }
+  }
+
   public async getAllTags(
     libraryID: number,
   ): Promise<{ tag: string; type: number }[]> {
@@ -608,6 +704,227 @@ export class RealZoteroGateway implements ZoteroGateway {
     }
     await item.saveTx();
     return item;
+  }
+
+  public async fetchText(url: string): Promise<string> {
+    // Load in a hidden browser so the page's own JavaScript runs, exactly as
+    // Zotero's connector does. This renders client-side content (e.g. MathJax
+    // turns LaTeX into MathML that Gecko can display offline) and clears cookie
+    // or JS anti-bot challenges that a plain HTTP GET trips. Falls back to a
+    // direct HTTP fetch if the hidden browser is unavailable.
+    try {
+      return await this.fetchRenderedHtml(url);
+    } catch (e) {
+      this.log("WARN fetchRenderedHtml failed, using HTTP", url, e);
+      return this.fetchHttpText(url);
+    }
+  }
+
+  private async fetchRenderedHtml(url: string): Promise<string> {
+    const { HiddenBrowser } = ChromeUtils.importESModule(
+      "chrome://zotero/content/HiddenBrowser.mjs",
+    ) as {
+      HiddenBrowser: new (options?: Record<string, unknown>) => {
+        load(url: string, options?: unknown): Promise<void>;
+        waitForDocument?(): Promise<void>;
+        getDocument(): Promise<Document>;
+        destroy(): void;
+      };
+    };
+
+    const browser = new HiddenBrowser({ blockRemoteResources: false });
+    try {
+      await browser.load(url);
+      await browser.waitForDocument?.();
+      // Client-side typesetting (MathJax) finishes after load; give it a moment
+      // so the rendered MathML is in the DOM before we serialize.
+      await Zotero.Promise.delay(RENDER_SETTLE_MS);
+      const doc = await browser.getDocument();
+      return String(doc.documentElement?.outerHTML ?? "");
+    } finally {
+      try {
+        browser.destroy();
+      } catch {
+        // A failed teardown must not mask a successful (or failed) load.
+      }
+    }
+  }
+
+  private async fetchHttpText(url: string): Promise<string> {
+    const http = Zotero.HTTP as unknown as {
+      request(
+        method: string,
+        url: string,
+        options?: Record<string, unknown>,
+      ): Promise<{ responseText: string }>;
+    };
+    // A browser-like User-Agent and Accept headers: some sites answer the
+    // default Zotero agent with a 403 or an anti-bot interstitial. Such a
+    // challenge often sets a cookie on the first response, so one retry through
+    // Zotero's shared cookie store then succeeds.
+    const options = {
+      responseType: "text",
+      timeout: 30_000,
+      headers: {
+        "User-Agent": BROWSER_USER_AGENT,
+        Accept:
+          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en,zh-CN;q=0.9,zh;q=0.8",
+      },
+    };
+    try {
+      const response = await http.request("GET", url, options);
+      return response.responseText ?? "";
+    } catch {
+      const response = await http.request("GET", url, options);
+      return response.responseText ?? "";
+    }
+  }
+
+  public async fetchDataUri(url: string): Promise<string | null> {
+    try {
+      const http = Zotero.HTTP as unknown as {
+        request(
+          method: string,
+          url: string,
+          options?: Record<string, unknown>,
+        ): Promise<{
+          response: ArrayBuffer;
+          getResponseHeader(name: string): string | null;
+        }>;
+      };
+      const response = await http.request("GET", url, {
+        responseType: "arraybuffer",
+        timeout: 30_000,
+      });
+      const contentType = (
+        response.getResponseHeader("Content-Type") ?? ""
+      ).split(";")[0];
+      if (!contentType.startsWith("image/")) return null;
+      const base64 = base64FromBytes(new Uint8Array(response.response));
+      return `data:${contentType};base64,${base64}`;
+    } catch {
+      return null;
+    }
+  }
+
+  public async saveWebpageSnapshot(input: {
+    url: string;
+    title: string;
+    snapshotContent: string;
+    fields?: Record<string, unknown>;
+    creators?: unknown[];
+    collectionIDs?: number[];
+  }): Promise<{ itemKey: string; attachmentKey: string }> {
+    const item = await this.createItem({
+      itemType: "webpage",
+      fields: { title: input.title, url: input.url, ...(input.fields ?? {}) },
+      creators: input.creators,
+      collectionIDs: input.collectionIDs,
+    });
+
+    const attachments = Zotero.Attachments as unknown as {
+      importFromSnapshotContent(options: {
+        url: string;
+        snapshotContent: string;
+        parentItemID: number;
+        title?: string;
+      }): Promise<Zotero.Item>;
+    };
+    const attachment = await attachments.importFromSnapshotContent({
+      url: input.url,
+      snapshotContent: wrapSnapshotHtml(
+        input.title,
+        renderSnapshotMath(input.snapshotContent),
+      ),
+      parentItemID: item.id,
+      title: input.title,
+    });
+
+    return { itemKey: item.key, attachmentKey: attachment.key };
+  }
+
+  public async importMarkdownSnapshot(input: {
+    path: string;
+    parentItemID: number;
+    title: string;
+  }): Promise<Zotero.Item> {
+    const markdown = await this.readTextFile(input.path);
+    const { data, body } = extractFrontMatter(markdown);
+    const meta = frontMatterToMetadata(data);
+
+    await this.applyFrontMatterToParent(input.parentItemID, meta);
+
+    const title = meta.fields.title || input.title;
+    const bodyHtml = markdownToNoteHtml(renderMarkdownMath(body));
+    const snapshotContent = wrapSnapshotHtml(title, bodyHtml);
+
+    const attachments = Zotero.Attachments as unknown as {
+      importFromSnapshotContent(options: {
+        url: string;
+        snapshotContent: string;
+        parentItemID: number;
+        title?: string;
+      }): Promise<Zotero.Item>;
+    };
+    return attachments.importFromSnapshotContent({
+      url: pathToFileUri(input.path),
+      snapshotContent,
+      parentItemID: input.parentItemID,
+      title,
+    });
+  }
+
+  /**
+   * Fills a Markdown import's parent item from its front matter. Only fields the
+   * item type actually has and that are currently empty are set, so a manually
+   * curated item is never clobbered; creators and tags are added only when none
+   * exist yet.
+   */
+  private async applyFrontMatterToParent(
+    parentItemID: number,
+    meta: {
+      fields: Record<string, string>;
+      creators: { creatorType: "author"; name: string }[];
+      tags: string[];
+    },
+  ): Promise<void> {
+    const item = Zotero.Items.get(parentItemID);
+    if (!item) return;
+
+    const valid = new Set(this.getFieldsForItemType(String(item.itemType)));
+    let changed = false;
+
+    for (const [field, value] of Object.entries(meta.fields)) {
+      if (!valid.has(field) || !value) continue;
+      let current: string;
+      try {
+        current = String(item.getField(field as never) ?? "");
+      } catch {
+        continue;
+      }
+      if (current) continue;
+      item.setField(field as never, value);
+      changed = true;
+    }
+
+    if (meta.creators.length && item.getCreators().length === 0) {
+      item.setCreators(
+        meta.creators.map((creator) => ({
+          creatorType: creator.creatorType,
+          name: creator.name,
+          fieldMode: 1,
+        })) as never,
+      );
+      changed = true;
+    }
+
+    if (meta.tags.length) {
+      for (const tag of meta.tags) item.addTag(tag);
+      changed = true;
+    }
+
+    if (changed) await item.saveTx();
   }
 
   public getFieldsForItemType(itemType: string): string[] {
@@ -785,6 +1102,34 @@ export class RealZoteroGateway implements ZoteroGateway {
       "utf-8",
       maxLength,
     ) as Promise<string>;
+  }
+
+  public async extractReadable(
+    html: string,
+    url: string,
+  ): Promise<ReadableResult> {
+    ensureExtractionGlobals();
+    // linkedom, not Gecko's DOMParser: Defuddle's content scoring isolates the
+    // article on a linkedom document but returns the whole page body on a Zotero
+    // DOMParser document. The full build's parse() fills each MathML node's
+    // data-latex (via mathml-to-latex); we then render the clean HTML to
+    // Markdown ourselves, turning that data-latex into LaTeX, rather than
+    // calling the bundled turndown, whose HTML parser is unreliable here.
+    const { document } = parseHTML(html);
+    const result = new Defuddle(document as unknown as Document, {
+      url,
+      useAsync: false,
+    }).parse();
+    const cleanHtml = result.content ?? "";
+    return {
+      html: cleanHtml,
+      markdown: cleanHtml ? noteHtmlToMarkdown(cleanHtml) : "",
+      title: result.title ?? "",
+      author: result.author ?? "",
+      published: result.published ?? "",
+      description: result.description ?? "",
+      wordCount: typeof result.wordCount === "number" ? result.wordCount : 0,
+    };
   }
 
   public async readBinaryFileAsBase64(
@@ -2042,6 +2387,153 @@ function pngDimensions(
 }
 
 /**
+ * Renders a snapshot's math for offline reading. A page fetched over HTTP keeps
+ * its math as LaTeX inside `<math data-latex="…">` elements that the site's
+ * client-side MathJax would have typeset; we never run that JS, so Temml turns
+ * each into native MathML, which Gecko renders without scripts or fonts. A
+ * LaTeX string Temml cannot parse is left as its original element.
+ */
+function renderSnapshotMath(html: string): string {
+  return html.replace(
+    /<math\b([^>]*)>[\s\S]*?<\/math>/gi,
+    (whole, attrs: string) => {
+      const latex = decodeHtmlEntities(
+        /\bdata-latex="([^"]*)"/i.exec(attrs)?.[1] ?? "",
+      ).trim();
+      if (!latex) return whole;
+      const displayMode = /display\s*=\s*"block"/i.test(attrs);
+      try {
+        return temml.renderToString(latex, {
+          displayMode,
+          throwOnError: false,
+        });
+      } catch {
+        return whole;
+      }
+    },
+  );
+}
+
+function decodeHtmlEntities(text: string): string {
+  return text
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
+/**
+ * Renders `$$…$$` and `$…$` math in Markdown source to MathML with Temml, so a
+ * Markdown import displays equations like the web captures do. Fenced and inline
+ * code spans are protected first so a `$` inside code is never treated as math;
+ * a fragment Temml cannot parse is left as its original text.
+ */
+function renderMarkdownMath(markdown: string): string {
+  const guarded: string[] = [];
+  const stash = (text: string): string => {
+    guarded.push(text);
+    return `\uE001${guarded.length - 1}\uE001`;
+  };
+
+  let s = markdown
+    .replace(/```[\s\S]*?```/g, stash)
+    .replace(/~~~[\s\S]*?~~~/g, stash)
+    .replace(/`[^`\n]+`/g, stash);
+
+  const render = (latex: string, displayMode: boolean, original: string) => {
+    const trimmed = latex.trim();
+    if (!trimmed) return original;
+    try {
+      return temml.renderToString(trimmed, {
+        displayMode,
+        throwOnError: false,
+      });
+    } catch {
+      return original;
+    }
+  };
+
+  s = s
+    .replace(/\$\$([\s\S]+?)\$\$/g, (m, tex: string) => render(tex, true, m))
+    .replace(/\\\[([\s\S]+?)\\\]/g, (m, tex: string) => render(tex, true, m))
+    .replace(/(?<![\\$])\$(?!\$)([^\n$]+?)\$(?!\$)/g, (m, tex: string) =>
+      render(tex, false, m),
+    )
+    .replace(/\\\(([\s\S]+?)\\\)/g, (m, tex: string) => render(tex, false, m));
+
+  return s.replace(/\uE001(\d+)\uE001/g, (_m, i: string) => guarded[Number(i)]);
+}
+
+/** A local file path as a `file://` URI, for a snapshot's source URL. */
+function pathToFileUri(path: string): string {
+  try {
+    const zf = Zotero.File as unknown as { pathToFileURI?(p: string): string };
+    if (typeof zf.pathToFileURI === "function") return zf.pathToFileURI(path);
+  } catch {
+    // Fall through to a manual construction.
+  }
+  const normalized = path.replace(/\\/g, "/");
+  return `file://${normalized.startsWith("/") ? "" : "/"}${encodeURI(normalized)}`;
+}
+
+/**
+ * Wraps clean article HTML in a minimal UTF-8 document so the saved snapshot
+ * reads correctly. Without an explicit charset the bare fragment is decoded as
+ * Latin-1 and non-ASCII text (e.g. CJK) turns to mojibake; the <article>
+ * wrapper also gives the reader and any re-extraction a clear content root.
+ */
+function wrapSnapshotHtml(title: string, bodyHtml: string): string {
+  const escaped = title
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+  return (
+    "<!DOCTYPE html>\n" +
+    '<html lang="und"><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width, initial-scale=1">' +
+    `<title>${escaped}</title>\n<style>${SNAPSHOT_STYLES}</style></head>\n` +
+    `<body><article>${bodyHtml}</article></body></html>`
+  );
+}
+
+/**
+ * A self-contained reader theme for saved snapshots: system fonts (no network),
+ * a comfortable measure, and light/dark support via color-scheme. Kept terse
+ * because it is inlined into every snapshot.
+ */
+const SNAPSHOT_STYLES = `
+:root{color-scheme:light dark;--fg:#1a1a1a;--muted:#6b7280;--bg:#ffffff;--accent:#2f6feb;--border:#e5e7eb;--code-bg:#f4f5f7;}
+@media (prefers-color-scheme:dark){:root{--fg:#e6e6e6;--muted:#9aa4b2;--bg:#1b1e23;--accent:#6ea8fe;--border:#2c313a;--code-bg:#23272e;}}
+html{font-size:18px;}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,"PingFang SC","Microsoft YaHei",sans-serif;line-height:1.7;}
+article{max-width:44rem;margin:0 auto;padding:3rem 1.25rem 5rem;}
+h1,h2,h3,h4,h5,h6{line-height:1.3;margin:2.2rem 0 .8rem;font-weight:650;}
+article> :first-child{margin-top:0;}
+h1{font-size:2rem;font-weight:700;}
+h2{font-size:1.5rem;border-bottom:1px solid var(--border);padding-bottom:.3rem;}
+h3{font-size:1.25rem;}
+p{margin:0 0 1.1rem;}
+a{color:var(--accent);text-decoration:none;}
+a:hover{text-decoration:underline;}
+img{max-width:100%;height:auto;border-radius:6px;display:block;margin:1.4rem auto;}
+figure{margin:1.6rem 0;}
+figcaption{color:var(--muted);font-size:.85em;text-align:center;margin-top:.5rem;}
+blockquote{margin:1.4rem 0;padding:.4rem 1.1rem;border-left:3px solid var(--accent);color:var(--muted);}
+code{background:var(--code-bg);padding:.15em .4em;border-radius:4px;font-size:.9em;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}
+pre{background:var(--code-bg);padding:1rem 1.1rem;border-radius:8px;overflow:auto;line-height:1.5;}
+pre code{background:none;padding:0;}
+table{border-collapse:collapse;width:100%;margin:1.4rem 0;font-size:.95em;}
+th,td{border:1px solid var(--border);padding:.5rem .7rem;text-align:left;}
+th{background:var(--code-bg);}
+hr{border:none;border-top:1px solid var(--border);margin:2.5rem 0;}
+ul,ol{padding-left:1.4rem;margin:0 0 1.1rem;}
+li{margin:.3rem 0;}
+math{font-size:1.05em;}
+math[display="block"]{display:block;overflow-x:auto;margin:1.3rem 0;}
+`.trim();
+
+/**
  * Base64-encodes raw bytes without exhausting the call stack: `btoa` needs a
  * binary string, and spreading a large `Uint8Array` into `fromCharCode` can
  * overflow, so the string is built in fixed-size chunks.
@@ -2054,6 +2546,41 @@ function base64FromBytes(bytes: Uint8Array): string {
     binary += String.fromCharCode(...chunk);
   }
   return btoa(binary);
+}
+
+/**
+ * Defuddle's bundled turndown picks its HTML parser at first use: it needs a
+ * global `DOMParser` (Zotero has one lexically but not always on `globalThis`),
+ * and it logs through a global `console`, which Zotero's module scope lacks.
+ * Publish both to `globalThis` once so Markdown conversion neither falls back to
+ * a missing `document` nor throws a ReferenceError.
+ */
+function ensureExtractionGlobals(): void {
+  const scope = globalThis as unknown as {
+    console?: unknown;
+    DOMParser?: unknown;
+  };
+  if (!scope.DOMParser && typeof DOMParser !== "undefined") {
+    scope.DOMParser = DOMParser;
+  }
+  if (scope.console) return;
+  const sink = (...args: unknown[]): void => {
+    try {
+      Zotero.debug(args.map((a) => String(a)).join(" "));
+    } catch {
+      // Logging is best-effort; never let it break extraction.
+    }
+  };
+  scope.console = {
+    log: sink,
+    info: sink,
+    warn: sink,
+    error: sink,
+    debug: sink,
+    trace: sink,
+    group: sink,
+    groupEnd: sink,
+  };
 }
 
 /**
