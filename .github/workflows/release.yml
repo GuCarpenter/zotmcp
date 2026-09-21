@@ -57,6 +57,15 @@ jobs:
           ARTIFACT: zotmcp-clipper-${{ github.ref_name }}.xpi
         run: |
           set -uo pipefail
+          # AMO rejects re-submitting a version it has already seen, so the
+          # clipper's manifest version must be unique per release. Derive it from
+          # the release tag (v1.2.3 -> 1.2.3) rather than a static manifest value.
+          VERSION="${GITHUB_REF_NAME#v}"
+          tmp="$(mktemp)"
+          jq --arg v "$VERSION" '.version = $v' firefox-clipper/manifest.json > "$tmp" \
+            && mv "$tmp" firefox-clipper/manifest.json
+          echo "Clipper version set to $VERSION"
+
           pack_unsigned() {
             rm -f "$ARTIFACT"
             (cd firefox-clipper && zip -r -FS "../$ARTIFACT" . -x "*.DS_Store")
