@@ -397,7 +397,63 @@ const specs: ToolSpec[] = [
         type: "string",
         enum: ["metadata", "tags", "tag", "parent", "related"],
       },
-      itemKeys: { type: "array", items: ITEM_KEY },
+      itemKey: {
+        ...ITEM_KEY,
+        description:
+          "Target item for 'metadata', 'parent' and 'related'. " +
+          ITEM_KEY.description,
+      },
+      itemKeys: {
+        type: "array",
+        items: ITEM_KEY,
+        description:
+          "Target items for 'tags' (or a single-item fallback for 'metadata').",
+      },
+      action: {
+        type: "string",
+        description:
+          "For 'tags'/'related': 'add' or 'remove' (default 'add'). " +
+          "For 'tag': 'rename', 'merge', 'delete' or 'color'.",
+      },
+      fields: {
+        type: "object",
+        description: "For 'metadata': field name/value pairs to set.",
+      },
+      creators: {
+        type: "array",
+        items: { type: "object" },
+        description: "For 'metadata': replacement creators list.",
+      },
+      tags: {
+        type: "array",
+        items: { type: "string" },
+        description: "For 'tags': tag names to add, remove or replace.",
+      },
+      tag: {
+        type: "string",
+        description:
+          "For 'tag': the existing tag name to rename, merge, delete or colour.",
+      },
+      newName: {
+        type: "string",
+        description: "For 'tag' rename/merge: the new tag name.",
+      },
+      color: {
+        type: "string",
+        description: "For 'tag' color: a hex colour, or null to clear.",
+      },
+      relatedItemKeys: {
+        type: "array",
+        items: ITEM_KEY,
+        description:
+          "For 'related': items to link to (or unlink from) itemKey, in both directions.",
+      },
+      parentItemKey: {
+        ...ITEM_KEY,
+        description:
+          "For 'parent': the new parent item, or omit to detach. " +
+          ITEM_KEY.description,
+      },
       operations: {
         type: "array",
         items: { type: "object" },
