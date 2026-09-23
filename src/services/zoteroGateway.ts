@@ -33,6 +33,41 @@ const BROWSER_USER_AGENT =
 /** How long to let a page's client-side scripts (e.g. MathJax) settle. */
 const RENDER_SETTLE_MS = 4000;
 
+/**
+ * How long to keep waiting for an anti-bot interstitial (Cloudflare's "Just a
+ * moment...", etc.) to clear itself in the hidden browser, and how often to
+ * re-check. The JS challenge runs non-interactively and then navigates to the
+ * real page, so polling the document until the markers disappear captures the
+ * article instead of the holding page.
+ */
+const CHALLENGE_MAX_WAIT_MS = 20000;
+const CHALLENGE_POLL_MS = 1000;
+
+/**
+ * Whether an HTML document is an anti-bot holding page rather than real
+ * content. Recognises Cloudflare's interstitial (title "Just a moment...", the
+ * challenge-platform script, `cf_chl`/Turnstile widgets) and the common
+ * "checking your browser" / "enable JavaScript and cookies" phrasings. Kept
+ * intentionally narrow so ordinary articles that merely mention Cloudflare do
+ * not trip it.
+ */
+export function looksLikeAntiBotChallenge(html: string): boolean {
+  if (!html) return false;
+  const title = /<title[^>]*>([^<]*)<\/title>/i.exec(html)?.[1]?.trim() ?? "";
+  if (/^just a moment/i.test(title)) return true;
+  return (
+    /challenge-platform\//i.test(html) ||
+    /window\._cf_chl_opt/i.test(html) ||
+    /cf-browser-verification/i.test(html) ||
+    /\bcf_chl_/i.test(html) ||
+    /\/turnstile\//i.test(html) ||
+    /checking your browser before accessing/i.test(html) ||
+    /(enable|turn on) javascript and cookies to continue/i.test(html) ||
+    /performing security verification/i.test(html) ||
+    /verify(ing)? you are (not a|human)/i.test(html)
+  );
+}
+
 /** The readable article Defuddle extracts from a full HTML page. */
 export interface ReadableResult {
   /** Clean article HTML, chrome and boilerplate removed. */
@@ -765,11 +800,22 @@ export class RealZoteroGateway implements ZoteroGateway {
     try {
       await browser.load(url);
       await browser.waitForDocument?.();
+
+      // An anti-bot interstitial (Cloudflare's "Just a moment...") loads first,
+      // runs its JS challenge, then navigates to the real page. Serializing
+      // immediately would capture the holding page, so poll until the markers
+      // clear (a clearance cookie makes later loads pass at once).
+      let html = await this.serializeDocument(browser);
+      const deadline = Date.now() + CHALLENGE_MAX_WAIT_MS;
+      while (looksLikeAntiBotChallenge(html) && Date.now() < deadline) {
+        await Zotero.Promise.delay(CHALLENGE_POLL_MS);
+        html = await this.serializeDocument(browser);
+      }
+
       // Client-side typesetting (MathJax) finishes after load; give it a moment
       // so the rendered MathML is in the DOM before we serialize.
       await Zotero.Promise.delay(RENDER_SETTLE_MS);
-      const doc = await browser.getDocument();
-      return String(doc.documentElement?.outerHTML ?? "");
+      return await this.serializeDocument(browser);
     } finally {
       try {
         browser.destroy();
@@ -777,6 +823,13 @@ export class RealZoteroGateway implements ZoteroGateway {
         // A failed teardown must not mask a successful (or failed) load.
       }
     }
+  }
+
+  private async serializeDocument(browser: {
+    getDocument(): Promise<Document>;
+  }): Promise<string> {
+    const doc = await browser.getDocument();
+    return String(doc.documentElement?.outerHTML ?? "");
   }
 
   private async fetchHttpText(url: string): Promise<string> {

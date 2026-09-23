@@ -9,6 +9,7 @@ import { stageUndo, UNDO_ACTIONS, undoLabel } from "./undo";
 import { buildCollectionSelectUri, buildItemUris } from "./uriService";
 import { requireKeys } from "./writeService";
 import type { ZoteroGateway } from "./zoteroGateway";
+import { looksLikeAntiBotChallenge } from "./zoteroGateway";
 
 const NOT_UNDOABLE_CREATE =
   "Creating an item is not undoable in Zotero; trash it if unwanted.";
@@ -280,6 +281,11 @@ export class ImportService {
 
     return this.mutations.enqueue("import url", async () => {
       const html = await this.gateway.fetchText(pageUrl);
+      if (looksLikeAntiBotChallenge(html)) {
+        throw new InvalidArgumentError(
+          `"${pageUrl}" is behind an anti-bot challenge (e.g. Cloudflare) that could not be cleared, so only the verification page was returned. Open it once in a browser signed in through Zotero, then retry, or save the page with the browser connector instead.`,
+        );
+      }
       const readable = await this.gateway.extractReadable(html, pageUrl);
       if (!readable.html) {
         throw new InvalidArgumentError(
@@ -650,34 +656,119 @@ async function embedImagesAsDataUris(
   baseUrl: string,
   gateway: ZoteroGateway,
 ): Promise<{ html: string; count: number }> {
-  const sources = new Set<string>();
-  const srcAttr = /<img\b[^>]*?\bsrc="([^"]+)"[^>]*>/gi;
+  const tags: string[] = [];
+  const imgTag = /<img\b[^>]*>/gi;
   let match: RegExpExecArray | null;
-  while ((match = srcAttr.exec(html))) {
-    const src = match[1];
-    if (src && !src.startsWith("data:")) sources.add(src);
+  while ((match = imgTag.exec(html))) tags.push(match[0]);
+
+  const candidates = new Set<string>();
+  for (const tag of tags) {
+    for (const url of imageCandidateUrls(tag)) candidates.add(url);
   }
 
-  const replacements = new Map<string, string>();
-  for (const src of sources) {
-    const absolute = resolveUrl(src, baseUrl);
-    if (!absolute) continue;
-    const dataUri = await gateway.fetchDataUri(absolute);
-    if (dataUri) replacements.set(src, dataUri);
+  const dataUriByUrl = new Map<string, string | null>();
+  for (const url of candidates) {
+    const absolute = resolveUrl(url, baseUrl);
+    if (!absolute) {
+      dataUriByUrl.set(url, null);
+      continue;
+    }
+    dataUriByUrl.set(url, await gateway.fetchDataUri(absolute));
   }
 
   let count = 0;
-  const rewritten = html.replace(
-    /(<img\b[^>]*?\bsrc=")([^"]+)(")/gi,
-    (whole, prefix: string, src: string, suffix: string) => {
-      const dataUri = replacements.get(src);
-      if (!dataUri) return whole;
-      count += 1;
-      return `${prefix}${dataUri}${suffix}`;
-    },
-  );
+  const rewritten = html.replace(imgTag, (tag) => {
+    for (const url of imageCandidateUrls(tag)) {
+      const dataUri = dataUriByUrl.get(url);
+      if (dataUri) {
+        count += 1;
+        return inlineImgTag(tag, dataUri);
+      }
+    }
+    return tag;
+  });
 
   return { html: rewritten, count };
+}
+
+/**
+ * The image URLs worth trying for one `<img>` tag, best first. `srcset`
+ * candidates come first, largest descriptor first, because responsive markup
+ * often points `src` at a small placeholder while the full-resolution variants
+ * live only in `srcset` (Substack serves a 424px `src`, for example, so
+ * embedding it would leave the snapshot blurry). The `src` is the last resort,
+ * used only when nothing in `srcset` can be fetched. A `src` that is already a
+ * data URI is skipped and the tag is left for `inlineImgTag` to clean up.
+ */
+function imageCandidateUrls(tag: string): string[] {
+  const urls: string[] = [];
+
+  const srcsetMatch = /\bsrcset="([^"]+)"/i.exec(tag);
+  if (srcsetMatch) {
+    for (const url of parseSrcset(srcsetMatch[1])) {
+      if (!url.startsWith("data:")) urls.push(url);
+    }
+  }
+
+  const srcMatch = /\bsrc="([^"]+)"/i.exec(tag);
+  const src = srcMatch?.[1];
+  if (src && !src.startsWith("data:")) urls.push(src);
+
+  return urls;
+}
+
+/**
+ * URLs from a `srcset` value, ordered largest descriptor first so the highest
+ * resolution is embedded when the plain `src` cannot be fetched. Entries are
+ * comma-separated, but a URL may itself contain commas (and never a space, as
+ * spaces must be encoded), so the value is tokenised on whitespace and the
+ * `<width>w` / `<density>x` descriptors are told apart from URLs.
+ */
+function parseSrcset(srcset: string): string[] {
+  const tokens = srcset.split(/\s+/).filter(Boolean);
+  const entries: { url: string; weight: number }[] = [];
+  let pendingUrl: string | null = null;
+
+  const flush = (weight: number) => {
+    if (pendingUrl === null) return;
+    entries.push({ url: pendingUrl.replace(/,+$/, ""), weight });
+    pendingUrl = null;
+  };
+
+  for (const token of tokens) {
+    const descriptor = /^(\d+(?:\.\d+)?)([wx]),?$/.exec(token);
+    if (descriptor && pendingUrl !== null) {
+      flush(Number(descriptor[1]));
+      continue;
+    }
+    flush(1);
+    if (token.endsWith(",")) {
+      entries.push({ url: token.replace(/,+$/, ""), weight: 1 });
+    } else {
+      pendingUrl = token;
+    }
+  }
+  flush(1);
+
+  entries.sort((a, b) => b.weight - a.weight);
+  return entries.map((entry) => entry.url).filter(Boolean);
+}
+
+/**
+ * Points an `<img>` at an embedded data URI: rewrites `src` and drops the
+ * responsive-source attributes so the browser cannot prefer a remote URL over
+ * the inlined image when the snapshot is read offline.
+ */
+function inlineImgTag(tag: string, dataUri: string): string {
+  let out = tag.replace(/\ssrcset="[^"]*"/gi, "");
+  out = out.replace(/\sdata-srcset="[^"]*"/gi, "");
+  out = out.replace(/\ssizes="[^"]*"/gi, "");
+  if (/\bsrc="[^"]*"/i.test(out)) {
+    out = out.replace(/\bsrc="[^"]*"/i, `src="${dataUri}"`);
+  } else {
+    out = out.replace(/<img\b/i, `<img src="${dataUri}"`);
+  }
+  return out;
 }
 
 function resolveUrl(src: string, baseUrl: string): string | null {

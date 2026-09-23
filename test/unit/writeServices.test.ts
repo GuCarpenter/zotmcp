@@ -8,6 +8,7 @@ import {
 } from "../../src/services/libraryWriteServices";
 import { MutationService } from "../../src/services/mutationService";
 import { WriteService } from "../../src/services/writeService";
+import { looksLikeAntiBotChallenge } from "../../src/services/zoteroGateway";
 import { FakeGateway } from "./fakeGateway";
 
 describe("write services", function () {
@@ -463,6 +464,102 @@ describe("write services", function () {
       expect(saved.snapshotContent).to.not.include('src="/img/a.png"');
     });
 
+    it("prefers the largest srcset variant and strips srcset so offline images stay sharp", async function () {
+      gateway.dataUriByUrl.set(
+        "https://x.test/a-848.png",
+        "data:image/png;base64,LARGE",
+      );
+      gateway.readableResult = {
+        html: '<img src="https://x.test/a-424.png" srcset="https://x.test/a-424.png 424w, https://x.test/a-848.png 848w" sizes="100vw">',
+        markdown: "",
+        title: "Post",
+        author: "",
+        published: "",
+        description: "",
+        wordCount: 0,
+      };
+
+      const result = await imports.fromUrl("https://example.com/post");
+
+      expect((result.created as any[])[0].snapshot.embeddedImages).to.equal(1);
+      const saved = gateway.savedWebpages[0].snapshotContent;
+      expect(saved).to.include("data:image/png;base64,LARGE");
+      expect(saved).to.not.include("srcset");
+      expect(saved).to.not.include("sizes=");
+      expect(saved).to.not.include("x.test");
+    });
+
+    it("falls back to src when srcset cannot be fetched", async function () {
+      gateway.dataUriByUrl.set("https://x.test/small.png 1x", null);
+      gateway.dataUriByUrl.set("https://x.test/small.png", null);
+      gateway.dataUriByUrl.set(
+        "https://x.test/original.png",
+        "data:image/png;base64,SRC",
+      );
+      gateway.readableResult = {
+        html: '<img src="https://x.test/original.png" srcset="https://x.test/small.png 424w">',
+        markdown: "",
+        title: "Post",
+        author: "",
+        published: "",
+        description: "",
+        wordCount: 0,
+      };
+
+      const result = await imports.fromUrl("https://example.com/post");
+
+      expect((result.created as any[])[0].snapshot.embeddedImages).to.equal(1);
+      const saved = gateway.savedWebpages[0].snapshotContent;
+      expect(saved).to.include("data:image/png;base64,SRC");
+      expect(saved).to.not.include("srcset");
+      expect(saved).to.not.include("x.test");
+    });
+
+    it("embeds from srcset when the src cannot be fetched", async function () {
+      gateway.dataUriByUrl.set("https://dead.test/gone.png", null);
+      gateway.readableResult = {
+        html: '<img src="https://dead.test/gone.png" srcset="https://cdn.test/small.png 424w, https://cdn.test/large.png 1456w">',
+        markdown: "",
+        title: "Post",
+        author: "",
+        published: "",
+        description: "",
+        wordCount: 0,
+      };
+
+      const result = await imports.fromUrl("https://example.com/post");
+
+      expect((result.created as any[])[0].snapshot.embeddedImages).to.equal(1);
+      const saved = gateway.savedWebpages[0].snapshotContent;
+      expect(saved).to.include("data:image/png;base64,");
+      expect(saved).to.not.include("dead.test");
+      expect(saved).to.not.include("cdn.test");
+    });
+
+    it("embeds a srcset URL that itself contains commas", async function () {
+      gateway.dataUriByUrl.set("https://dead.test/gone.png", null);
+      const largest =
+        "https://cdn.test/fetch/$s_!x!,w_1456,c_limit,f_webp/img_1504x876.png";
+      gateway.dataUriByUrl.set(largest, "data:image/webp;base64,BBBB");
+      gateway.readableResult = {
+        html: `<img src="https://dead.test/gone.png" srcset="https://cdn.test/fetch/$s_!x!,w_424,c_limit,f_webp/img_1504x876.png 424w, ${largest} 1456w">`,
+        markdown: "",
+        title: "Post",
+        author: "",
+        published: "",
+        description: "",
+        wordCount: 0,
+      };
+
+      const result = await imports.fromUrl("https://example.com/post");
+
+      expect((result.created as any[])[0].snapshot.embeddedImages).to.equal(1);
+      const saved = gateway.savedWebpages[0].snapshotContent;
+      expect(saved).to.include("data:image/webp;base64,BBBB");
+      expect(saved).to.not.include("srcset");
+      expect(saved).to.not.include("cdn.test");
+    });
+
     it("skips image embedding when embedImages is false", async function () {
       gateway.readableResult = {
         html: '<p><img src="https://x.test/a.png"></p>',
@@ -484,6 +581,21 @@ describe("write services", function () {
       expect(gateway.savedWebpages[0].snapshotContent).to.include(
         'src="https://x.test/a.png"',
       );
+    });
+
+    it("fails clearly when the page is an anti-bot challenge", async function () {
+      gateway.fetchTextResult =
+        "<html><head><title>Just a moment...</title></head><body><p>Enable JavaScript and cookies to continue</p></body></html>";
+      let error: any;
+      try {
+        await imports.fromUrl("https://example.com/blocked");
+      } catch (e) {
+        error = e;
+      }
+      expect(error?.code).to.equal("invalid_argument");
+      expect(String(error?.message)).to.match(/anti-bot|Cloudflare/i);
+      expect(gateway.savedWebpages.length).to.equal(0);
+      expect(gateway.extractReadableCalls.length).to.equal(0);
     });
 
     it("rejects a non-http URL", async function () {
@@ -669,5 +781,37 @@ describe("write services", function () {
       }
       expect(error?.code).to.equal("file_missing");
     });
+  });
+});
+
+describe("looksLikeAntiBotChallenge", function () {
+  it("flags Cloudflare's Just a moment interstitial", function () {
+    expect(
+      looksLikeAntiBotChallenge(
+        "<html><head><title>Just a moment...</title></head><body></body></html>",
+      ),
+    ).to.equal(true);
+  });
+
+  it("flags the challenge-platform script and enable-javascript prompt", function () {
+    expect(
+      looksLikeAntiBotChallenge(
+        '<html><body><script src="/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1"></script></body></html>',
+      ),
+    ).to.equal(true);
+    expect(
+      looksLikeAntiBotChallenge(
+        "<html><body>Enable JavaScript and cookies to continue</body></html>",
+      ),
+    ).to.equal(true);
+  });
+
+  it("passes an ordinary article, even one that mentions Cloudflare", function () {
+    expect(
+      looksLikeAntiBotChallenge(
+        "<html><head><title>How Cloudflare works</title></head><body><article>Cloudflare is a CDN...</article></body></html>",
+      ),
+    ).to.equal(false);
+    expect(looksLikeAntiBotChallenge("")).to.equal(false);
   });
 });
