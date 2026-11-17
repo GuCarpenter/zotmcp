@@ -7,6 +7,7 @@
 import type { AnnotationService } from "../services/annotationService";
 import type { DocumentTextService } from "../services/documentTextService";
 import type { EpubCfiService } from "../services/epubCfiService";
+import type { FigureLocator } from "../services/figureLocator";
 import type { ImageService } from "../services/imageService";
 import type { ItemResolver } from "../services/itemResolver";
 import type { MutationService } from "../services/mutationService";
@@ -36,6 +37,7 @@ export interface ToolContext {
   notes: NoteService;
   annotations: AnnotationService;
   epubCfi: EpubCfiService;
+  figures: FigureLocator;
   images: ImageService;
   writes: WriteService;
   collections: CollectionService;

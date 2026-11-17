@@ -6,6 +6,11 @@
 import { InvalidArgumentError } from "../errors";
 import { ALL_SECTIONS, type ReadSection } from "../services/readService";
 import {
+  normalizeFigureLimit,
+  normalizeFigurePadding,
+  normalizePageIndex,
+} from "../services/figureOptions";
+import {
   EPUB_CONTENT_TYPE,
   PDF_CONTENT_TYPE,
 } from "../services/documentTextService";
@@ -228,9 +233,132 @@ export async function paperRead(
       const result = await ctx.documents.clean(attachment, maxChars);
       return jsonResult({ attachmentKey: attachment.key, mode, ...result });
     }
+    case "figures": {
+      const only = str(args, "only");
+      if (only !== undefined && only !== "figures" && only !== "tables") {
+        throw new InvalidArgumentError(
+          `"only" must be "figures" or "tables", got ${JSON.stringify(only)}.`,
+        );
+      }
+      const kind =
+        only === "tables" ? "table" : only === "figures" ? "figure" : undefined;
+      const limit = normalizeFigureLimit(args.limit);
+
+      // An EPUB has no pages or rects: its figures are captions in the book's
+      // XHTML, so the inventory reports where each one lives and which embedded
+      // image it resolves to instead.
+      if (attachment.attachmentContentType === EPUB_CONTENT_TYPE) {
+        const all = await ctx.gateway.listEpubFigures(attachment);
+        const filtered = all.filter((f) => !kind || f.kind === kind);
+        return jsonResult({
+          attachmentKey: attachment.key,
+          mode,
+          total: filtered.length,
+          truncated: filtered.length > limit,
+          pagesScanned: 0,
+          figures: filtered.slice(0, limit).map((f) => ({
+            label: f.label,
+            kind: f.kind,
+            number: f.number,
+            page: null,
+            rect: null,
+            hasGraphic: f.imageEntry !== null,
+            location: { spine: f.spineIndex, href: f.href },
+            image: f.imageEntry,
+          })),
+          ...(filtered.length === 0
+            ? {
+                note:
+                  "No labelled captions were found in this EPUB's XHTML. Read " +
+                  "one by label with image_read source 'figure', which " +
+                  "extracts the embedded image.",
+              }
+            : {}),
+        });
+      }
+
+      const result = await ctx.figures.list(attachment.id, {
+        restrictPage:
+          args.page === undefined || args.page === null
+            ? undefined
+            : normalizePageIndex(args.page),
+        padding: normalizeFigurePadding(args.padding),
+        kind,
+        limit,
+      });
+      return jsonResult({
+        attachmentKey: attachment.key,
+        mode,
+        ...result,
+        figures: result.figures.map((f) => ({
+          label: f.label,
+          kind: f.kind,
+          number: f.number,
+          page: f.pageIndex + 1,
+          rect: f.rect,
+          hasGraphic: f.hasGraphic,
+        })),
+      });
+    }
+    case "tables": {
+      if (attachment.attachmentContentType === EPUB_CONTENT_TYPE) {
+        const all = await ctx.gateway.listEpubFigures(attachment);
+        const tables = all.filter((f) => f.kind === "table");
+        const limit = normalizeFigureLimit(args.limit);
+        return jsonResult({
+          attachmentKey: attachment.key,
+          mode,
+          total: tables.length,
+          truncated: tables.length > limit,
+          captioned: tables.length,
+          pagesScanned: 0,
+          tables: tables.slice(0, limit).map((f) => ({
+            label: f.label,
+            number: f.number,
+            page: null,
+            rect: null,
+            captioned: true,
+            preview: f.caption.slice(0, 120),
+            location: { spine: f.spineIndex, href: f.href },
+            image: f.imageEntry,
+          })),
+          ...(tables.length === 0
+            ? {
+                note:
+                  "No table captions were found in this EPUB's XHTML. An EPUB " +
+                  "has no page geometry, so tables drawn as markup cannot be " +
+                  "located by rect either.",
+              }
+            : {}),
+        });
+      }
+
+      const result = await ctx.figures.listTables(attachment.id, {
+        restrictPage:
+          args.page === undefined || args.page === null
+            ? undefined
+            : normalizePageIndex(args.page),
+        padding: normalizeFigurePadding(args.padding),
+        includeUncaptioned: args.includeUncaptioned === true,
+        limit: normalizeFigureLimit(args.limit),
+      });
+      return jsonResult({
+        attachmentKey: attachment.key,
+        mode,
+        ...result,
+        tables: result.tables.map((t) => ({
+          label: t.label,
+          number: t.number,
+          page: t.pageIndex + 1,
+          rect: t.rect,
+          captioned: t.captioned,
+          preview: t.preview,
+        })),
+      });
+    }
     default:
       throw new InvalidArgumentError(
-        `Unknown mode ${JSON.stringify(mode)}: expected fulltext, pages, sections or clean.`,
+        `Unknown mode ${JSON.stringify(mode)}: expected fulltext, pages, sections, clean, figures or tables.`,
       );
   }
 }
@@ -420,6 +548,7 @@ export async function imageRead(
     page: args.page,
     rect: args.rect,
     figure: args.figure,
+    padding: args.padding,
   });
 
   const { base64, mimeType, ...metadata } = result;

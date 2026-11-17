@@ -44,6 +44,38 @@ const CHALLENGE_MAX_WAIT_MS = 20000;
 const CHALLENGE_POLL_MS = 1000;
 
 /**
+ * How long one reader render may take before it is treated as lost. PDF.js only
+ * lays out pages the reader's view has visited and answers a request for any
+ * other page by never settling at all, so every render needs a deadline.
+ */
+const RENDER_TIMEOUT_MS = 8000;
+
+/** How long a background reader gets to report that it scrolled to a page. */
+const PAGE_SETTLE_TIMEOUT_MS = 4000;
+
+/**
+ * Resolves with the promise's value, or with null once `ms` has passed. The
+ * abandoned promise is left to settle on its own; callers only care that a
+ * wedged reader cannot hold a tool call open forever.
+ */
+async function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), ms);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/**
  * Whether an HTML document is an anti-bot holding page rather than real
  * content. Recognises Cloudflare's interstitial (title "Just a moment...", the
  * challenge-platform script, `cf_chl`/Turnstile widgets) and the common
@@ -315,6 +347,17 @@ export interface ZoteroGateway {
   } | null>;
 
   /**
+   * A PDF page's crop box in PDF user space, `[x1, y1, x2, y2]` — the bounds a
+   * region render is confined to. Callers use it to keep a padded crop inside
+   * the page. Same reader requirement as `renderPdfPageImage`.
+   */
+  getPdfPageView(
+    attachmentItemID: number,
+    pageIndex: number,
+    options?: { openIfNeeded?: boolean },
+  ): Promise<[number, number, number, number] | null>;
+
+  /**
    * Captures the reader's currently visible viewport for an open attachment as
    * a base64 PNG — exactly what is painted, including scroll offset, zoom and a
    * continuous view spanning two pages. Works for any reader type (PDF, EPUB,
@@ -337,12 +380,20 @@ export interface ZoteroGateway {
   extractEpubFigureImage(
     attachment: Zotero.Item,
     label: string,
+    options?: { entry?: string },
   ): Promise<{
     base64: string;
     mimeType: string;
     entry: string;
     label: string;
   } | null>;
+
+  /**
+   * Every labelled figure and table in an EPUB, in spine order, with the
+   * embedded image entry each one resolves to. An EPUB has no page geometry, so
+   * this is the flat counterpart to the PDF rect-based figure inventory.
+   */
+  listEpubFigures(attachment: Zotero.Item): Promise<EpubFigureEntry[]>;
 
   /**
    * Zotero 10's Structured Document Text pack for a PDF, EPUB or snapshot
@@ -484,6 +535,21 @@ export type EndpointConstructor = new () => ZotmcpServer.Endpoint;
 export interface SearchHandle {
   addCondition(condition: string, operator: string, value?: string): void;
   search(): Promise<number[]>;
+}
+
+/** One figure or table found by reading an EPUB's own XHTML. */
+export interface EpubFigureEntry {
+  /** Label plus caption text, as the book writes it. */
+  label: string;
+  caption: string;
+  kind: FigureKind;
+  number: string;
+  /** Position in the spine, 0-based. */
+  spineIndex: number;
+  /** Zip entry of the document the figure lives in, e.g. "OEBPS/ch03.xhtml". */
+  href: string;
+  /** Zip entry of the figure's embedded image, when one resolves. */
+  imageEntry: string | null;
 }
 
 /** A node in an SDT pack: either a text leaf or a block with children. */
@@ -1332,6 +1398,13 @@ export class RealZoteroGateway implements ZoteroGateway {
    * the whole render inside the reader's content scope — the only place the
    * viewer's document and canvases are usable — and returns a PNG data URL. A
    * null `rect` renders the full page view box.
+   *
+   * PDF.js only lays out pages the reader's view has visited, and
+   * `renderRegionCrops` for a page it has never shown does not fail — its promise
+   * simply never settles. So the render is bounded, and a request that runs out
+   * of time scrolls the reader (in the background) to the page and tries once
+   * more. Without that, `image_read` on any page other than the one the reader
+   * happens to be sitting on hung until Zotero was restarted.
    */
   private async renderViaReader(
     attachmentItemID: number,
@@ -1351,17 +1424,16 @@ export class RealZoteroGateway implements ZoteroGateway {
       }
       if (!reader) return null;
 
-      const ctx = this.getReaderRenderContext(reader);
+      let ctx = this.getReaderRenderContext(reader);
       if (!ctx) return null;
-      const { win, renderer, pdfDocument } = ctx;
 
       const pageNumber = pageIndex + 1;
-      if (pageNumber < 1 || pageNumber > pdfDocument.numPages) return null;
+      if (pageNumber < 1 || pageNumber > ctx.pdfDocument.numPages) return null;
 
       // A null rect means the whole page: fall back to the page's view box.
       let region = rect;
       if (!region) {
-        const page = waiveXrays(await pdfDocument.getPage(pageNumber)) as {
+        const page = waiveXrays(await ctx.pdfDocument.getPage(pageNumber)) as {
           view: number[];
         };
         const v = page.view;
@@ -1369,13 +1441,14 @@ export class RealZoteroGateway implements ZoteroGateway {
         region = [v[0], v[1], v[2], v[3]];
       }
 
-      // renderRegionCrops runs in the reader's content scope, so the rect array
-      // must be cloned into that scope or the content code cannot read it.
-      const crops = waiveXrays(
-        await renderer.renderRegionCrops(pageIndex, cloneInto([region], win)),
-      ) as string[];
-      const dataUrl = crops?.[0];
-      if (typeof dataUrl !== "string" || !dataUrl) return null;
+      let dataUrl = await this.renderCrops(ctx, pageIndex, region);
+      if (!dataUrl) {
+        await this.showReaderPage(attachmentItemID, pageIndex);
+        const refreshed = this.findReaderByItemID(attachmentItemID);
+        if (refreshed) ctx = this.getReaderRenderContext(refreshed) ?? ctx;
+        dataUrl = await this.renderCrops(ctx, pageIndex, region);
+      }
+      if (!dataUrl) return null;
 
       const base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
       const dims = pngDimensions(base64);
@@ -1388,6 +1461,104 @@ export class RealZoteroGateway implements ZoteroGateway {
     } catch (e) {
       this.log("WARN renderViaReader failed", attachmentItemID, pageIndex, e);
       return null;
+    }
+  }
+
+  public async getPdfPageView(
+    attachmentItemID: number,
+    pageIndex: number,
+    options: { openIfNeeded?: boolean } = {},
+  ): Promise<[number, number, number, number] | null> {
+    try {
+      let reader = this.findReaderByItemID(attachmentItemID);
+      if (!reader && options.openIfNeeded) {
+        reader = await this.openBackgroundReader(attachmentItemID);
+      }
+      if (!reader) return null;
+
+      const ctx = this.getReaderRenderContext(reader);
+      if (!ctx) return null;
+      const { pdfDocument } = ctx;
+
+      const pageNumber = pageIndex + 1;
+      if (pageNumber < 1 || pageNumber > pdfDocument.numPages) return null;
+
+      const page = waiveXrays(await pdfDocument.getPage(pageNumber)) as {
+        view?: number[];
+      };
+      const v = page.view;
+      if (!v || v.length < 4) return null;
+      return [v[0], v[1], v[2], v[3]];
+    } catch (e) {
+      this.log("WARN getPdfPageView failed", attachmentItemID, pageIndex, e);
+      return null;
+    }
+  }
+
+  /**
+   * One bounded attempt at `renderRegionCrops`, returning the PNG data URL or
+   * null on failure or timeout. The timeout matters because PDF.js answers a
+   * request for a page its view has never laid out by never settling at all.
+   */
+  private async renderCrops(
+    ctx: {
+      win: Window & typeof globalThis;
+      renderer: {
+        renderRegionCrops(
+          pageIndex: number,
+          rects: number[][],
+        ): Promise<string[]>;
+      };
+    },
+    pageIndex: number,
+    region: [number, number, number, number],
+  ): Promise<string | null> {
+    try {
+      // renderRegionCrops runs in the reader's content scope, so the rect array
+      // must be cloned into that scope or the content code cannot read it.
+      const crops = await withTimeout(
+        ctx.renderer.renderRegionCrops(pageIndex, cloneInto([region], ctx.win)),
+        RENDER_TIMEOUT_MS,
+      );
+      if (!crops) return null;
+      const dataUrl = waiveXrays(crops)?.[0];
+      return typeof dataUrl === "string" && dataUrl ? dataUrl : null;
+    } catch (e) {
+      this.log("WARN renderCrops failed", pageIndex, e);
+      return null;
+    }
+  }
+
+  /**
+   * Scrolls the reader to a page without selecting its tab, then waits briefly
+   * for the view to report the move. This is what makes the page layout at all,
+   * and therefore what lets it be rendered.
+   */
+  private async showReaderPage(
+    attachmentItemID: number,
+    pageIndex: number,
+  ): Promise<void> {
+    try {
+      await withTimeout(
+        this.openReader({
+          itemID: attachmentItemID,
+          location: { pageIndex },
+          openInBackground: true,
+        }),
+        RENDER_TIMEOUT_MS,
+      );
+
+      const deadline = Date.now() + PAGE_SETTLE_TIMEOUT_MS;
+      while (Date.now() < deadline) {
+        if (
+          this.getActiveReader(attachmentItemID)?.state?.pageIndex === pageIndex
+        ) {
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+    } catch (e) {
+      this.log("WARN showReaderPage failed", attachmentItemID, pageIndex, e);
     }
   }
 
@@ -1466,21 +1637,175 @@ export class RealZoteroGateway implements ZoteroGateway {
   public async extractEpubFigureImage(
     attachment: Zotero.Item,
     label: string,
+    options: { entry?: string } = {},
   ): Promise<{
     base64: string;
     mimeType: string;
     entry: string;
     label: string;
   } | null> {
-    if (attachment.attachmentContentType !== "application/epub+zip")
-      return null;
     const parsed = parseFigureLabel(label);
     if (!parsed) return null;
 
+    // A caller that already listed the book's figures knows exactly which image
+    // belongs to this label, including the cases where the nearest-image
+    // heuristic below is ambiguous because two captions share one neighbour.
+    if (options.entry) {
+      const bytes = await this.readEpubEntryBytes(attachment, options.entry);
+      if (bytes) {
+        return {
+          base64: base64FromBytes(bytes),
+          mimeType: mimeFromExtension(options.entry),
+          entry: options.entry,
+          label: parsed.canonical,
+        };
+      }
+    }
+
+    let found: {
+      base64: string;
+      mimeType: string;
+      entry: string;
+      label: string;
+    } | null = null;
+    await this.scanEpubDocuments(
+      attachment,
+      (doc, _spine, docDir, readBytes) => {
+        const src = this.findEpubFigureImageSrc(doc, parsed);
+        if (!src) return false;
+        const imgEntry = resolveEpubPath(docDir, src);
+        const bytes = readBytes(imgEntry);
+        if (!bytes) return false;
+        found = {
+          base64: base64FromBytes(bytes),
+          mimeType: mimeFromExtension(imgEntry),
+          entry: imgEntry,
+          label: parsed.canonical,
+        };
+        return true;
+      },
+    );
+    return found;
+  }
+
+  /**
+   * Every labelled figure and table an EPUB shows, in spine order, found by
+   * reading the book's own XHTML. An EPUB has no page geometry, so an entry
+   * carries the spine document it lives in and the embedded image entry that
+   * `extractEpubFigureImage` would return for its label, not a page and rect.
+   */
+  public async listEpubFigures(
+    attachment: Zotero.Item,
+  ): Promise<EpubFigureEntry[]> {
+    const entries: EpubFigureEntry[] = [];
+    const seen = new Set<string>();
+    /** Image entries already attributed to a figure, so none is reused. */
+    const claimed = new Set<string>();
+
+    await this.scanEpubDocuments(
+      attachment,
+      (doc, spineIndex, docDir, readBytes, docEntry) => {
+        // Captions in an EPUB are either semantic `<figcaption>`s or ordinary
+        // paragraph/div text that starts with the label; both are common.
+        const candidates = [
+          ...Array.prototype.slice.call(doc.querySelectorAll("figcaption")),
+          ...Array.prototype.slice.call(doc.querySelectorAll("p, div, td")),
+        ] as Element[];
+
+        for (const element of candidates) {
+          const text = (element.textContent ?? "").replace(/\s+/g, " ").trim();
+          if (!text || text.length > 2000) continue;
+          const parsed = parseFigureLabel(text);
+          if (!parsed) continue;
+
+          const key = `${parsed.kind}:${parsed.num}`;
+          if (seen.has(key)) continue;
+          // A bare cross-reference ("see Figure 3") is not a caption; require
+          // the block to be the label plus some caption text, or a figcaption.
+          const rest = text.replace(/^\s*\S+\s*\S+/, "").trim();
+          const isFigcaption = element.tagName.toLowerCase() === "figcaption";
+          if (!isFigcaption && rest.length < 2) continue;
+
+          seen.add(key);
+          const src = this.findEpubFigureImageSrc(doc, parsed, (candidate) =>
+            claimed.has(resolveEpubPath(docDir, candidate)),
+          );
+          const imageEntry = src ? resolveEpubPath(docDir, src) : null;
+          const readable =
+            imageEntry && !claimed.has(imageEntry) && readBytes(imageEntry)
+              ? imageEntry
+              : null;
+          if (readable) claimed.add(readable);
+          entries.push({
+            label: text.slice(0, 200),
+            caption: text,
+            kind: parsed.kind,
+            number: parsed.num,
+            spineIndex,
+            href: docEntry,
+            imageEntry: readable,
+          });
+        }
+        return false;
+      },
+    );
+
+    return entries;
+  }
+
+  /** Reads one zip entry out of an EPUB, for a caller that named it directly. */
+  private async readEpubEntryBytes(
+    attachment: Zotero.Item,
+    entry: string,
+  ): Promise<Uint8Array | null> {
+    if (attachment.attachmentContentType !== "application/epub+zip") {
+      return null;
+    }
     let zip: ZipHandle | null = null;
     try {
       const path = await this.getAttachmentPath(attachment);
       if (!path) return null;
+      const file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
+      file.initWithPath(path);
+      zip = Cc["@mozilla.org/libjar/zip-reader;1"].createInstance(
+        Ci.nsIZipReader,
+      ) as unknown as ZipHandle;
+      zip.open(file);
+      return this.readZipEntryBytes(zip, entry);
+    } catch (e) {
+      this.log("WARN readEpubEntryBytes failed", attachment.key, entry, e);
+      return null;
+    } finally {
+      try {
+        zip?.close();
+      } catch {
+        // Best-effort close.
+      }
+    }
+  }
+
+  /**
+   * Walks an EPUB's spine documents, handing each parsed XHTML to `visit` with
+   * everything needed to resolve its assets. `visit` returns true to stop early.
+   * Non-EPUB attachments, unreadable zips and malformed documents are skipped
+   * silently — the callers treat "no figures" and "not an EPUB" alike.
+   */
+  private async scanEpubDocuments(
+    attachment: Zotero.Item,
+    visit: (
+      doc: Document,
+      spineIndex: number,
+      docDir: string,
+      readBytes: (entry: string) => Uint8Array | null,
+      docEntry: string,
+    ) => boolean,
+  ): Promise<void> {
+    if (attachment.attachmentContentType !== "application/epub+zip") return;
+
+    let zip: ZipHandle | null = null;
+    try {
+      const path = await this.getAttachmentPath(attachment);
+      if (!path) return;
 
       const file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
       file.initWithPath(path);
@@ -1501,6 +1826,8 @@ export class RealZoteroGateway implements ZoteroGateway {
         converter.close();
         return text;
       };
+      const readBytes = (entry: string): Uint8Array | null =>
+        this.readZipEntryBytes(zip!, entry);
 
       const parser = new DOMParser();
       const container = parser.parseFromString(
@@ -1510,7 +1837,7 @@ export class RealZoteroGateway implements ZoteroGateway {
       const opfPath = container
         .querySelector("rootfile")
         ?.getAttribute("full-path");
-      if (!opfPath) return null;
+      if (!opfPath) return;
       const opfDir = opfPath.includes("/") ? opfPath.replace(/[^/]+$/, "") : "";
 
       const opf = parser.parseFromString(readText(opfPath), "application/xml");
@@ -1524,11 +1851,12 @@ export class RealZoteroGateway implements ZoteroGateway {
         opf.querySelectorAll("spine > itemref"),
       ) as Element[];
 
-      for (const itemref of itemrefs) {
-        const idref = itemref.getAttribute("idref");
+      for (let spineIndex = 0; spineIndex < itemrefs.length; spineIndex++) {
+        const idref = itemrefs[spineIndex].getAttribute("idref");
         const href = idref ? manifest.get(idref) : undefined;
         if (!href) continue;
         const docEntry = resolveEpubPath(opfDir, href);
+
         let xhtml: string;
         try {
           xhtml = readText(docEntry);
@@ -1540,28 +1868,13 @@ export class RealZoteroGateway implements ZoteroGateway {
         const doc = parser.parseFromString(xhtml, "application/xhtml+xml");
         if (doc.querySelector("parsererror")) continue;
 
-        const src = this.findEpubFigureImageSrc(doc, parsed);
-        if (!src) continue;
-
-        // Resolve the img src (relative to the doc's folder) to a zip entry.
         const docDir = docEntry.includes("/")
           ? docEntry.replace(/[^/]+$/, "")
           : "";
-        const imgEntry = resolveEpubPath(docDir, src);
-        const bytes = this.readZipEntryBytes(zip!, imgEntry);
-        if (!bytes) continue;
-
-        return {
-          base64: base64FromBytes(bytes),
-          mimeType: mimeFromExtension(imgEntry),
-          entry: imgEntry,
-          label: parsed.canonical,
-        };
+        if (visit(doc, spineIndex, docDir, readBytes, docEntry)) return;
       }
-      return null;
     } catch (e) {
-      this.log("WARN extractEpubFigureImage failed", attachment.key, e);
-      return null;
+      this.log("WARN scanEpubDocuments failed", attachment.key, e);
     } finally {
       try {
         zip?.close();
@@ -1580,7 +1893,10 @@ export class RealZoteroGateway implements ZoteroGateway {
   private findEpubFigureImageSrc(
     doc: Document,
     parsed: { kind: FigureKind; num: string; canonical: string },
+    isTaken?: (src: string) => boolean,
   ): string | null {
+    const usable = (src: string | null): string | null =>
+      src && !isTaken?.(src) ? src : null;
     const matches = (text: string): boolean => {
       const other = parseFigureLabel(text);
       return !!other && other.kind === parsed.kind && other.num === parsed.num;
@@ -1597,7 +1913,7 @@ export class RealZoteroGateway implements ZoteroGateway {
         matches((caption.textContent ?? "").replace(/\s+/g, " "))
       ) {
         const img = figure.querySelector("img");
-        const src = img?.getAttribute("src");
+        const src = usable(img?.getAttribute("src") ?? null);
         if (src) return src;
       }
     }
@@ -1618,15 +1934,20 @@ export class RealZoteroGateway implements ZoteroGateway {
       if (!matches(text)) continue;
       if (text.length <= parsed.canonical.length + 3) continue;
 
+      // The nearest image before the caption wins, then the nearest after it.
+      // An image another caption already claimed is skipped, so two captions in
+      // one document cannot both resolve to the same picture.
       let prev: Element | null = null;
       let next: Element | null = null;
       for (const img of imgs) {
+        if (!usable(img.getAttribute("src") ?? null)) continue;
         const rel = block.compareDocumentPosition(img);
         if (rel & 2 /* PRECEDING */) prev = img;
         else if (rel & 4 /* FOLLOWING */ && !next) next = img;
       }
-      const src =
-        prev?.getAttribute("src") ?? next?.getAttribute("src") ?? null;
+      const src = usable(
+        prev?.getAttribute("src") ?? next?.getAttribute("src") ?? null,
+      );
       if (src) return src;
     }
     return null;
@@ -1738,17 +2059,22 @@ export class RealZoteroGateway implements ZoteroGateway {
     itemID: number,
   ): Promise<Record<string, unknown> | null> {
     try {
-      await (
-        Zotero as unknown as {
-          Reader: {
-            open(
-              itemID: number,
-              location?: unknown,
-              options?: Record<string, unknown>,
-            ): Promise<unknown>;
-          };
-        }
-      ).Reader.open(itemID, null, { openInBackground: true });
+      // Bounded: a reader whose tab never paints can leave `open` pending, and
+      // an unbounded await here would hold the whole tool call open.
+      await withTimeout(
+        (
+          Zotero as unknown as {
+            Reader: {
+              open(
+                itemID: number,
+                location?: unknown,
+                options?: Record<string, unknown>,
+              ): Promise<unknown>;
+            };
+          }
+        ).Reader.open(itemID, null, { openInBackground: true }),
+        RENDER_TIMEOUT_MS,
+      );
     } catch (e) {
       this.log("WARN could not open background reader", itemID, e);
       return null;

@@ -40,6 +40,7 @@ export function createToolContext(gateway: ZoteroGateway): ToolContext {
     notes: new NoteService(gateway, resolver),
     annotations: new AnnotationService(gateway, resolver, epubCfi, figures),
     epubCfi,
+    figures,
     images: new ImageService(gateway, resolver, figures),
     writes: new WriteService(gateway, resolver, mutations),
     collections: new CollectionService(gateway, resolver, mutations),

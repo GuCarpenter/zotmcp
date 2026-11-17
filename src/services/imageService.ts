@@ -22,6 +22,7 @@ import {
 } from "../errors";
 import { EPUB_CONTENT_TYPE, PDF_CONTENT_TYPE } from "./documentTextService";
 import type { FigureLocator } from "./figureLocator";
+import { normalizeFigurePadding, normalizePageIndex } from "./figureOptions";
 import type { ItemResolver } from "./itemResolver";
 import type { ZoteroGateway } from "./zoteroGateway";
 
@@ -49,6 +50,11 @@ export interface ImageReadOptions {
   rect?: unknown;
   /** Figure or table label to locate, for the `figure` source, e.g. "Figure 1". */
   figure?: unknown;
+  /**
+   * Margin in PDF points around a located figure, for the `figure` source.
+   * Defaults to `DEFAULT_FIGURE_PADDING`; 0 keeps the raw ink-tight union.
+   */
+  padding?: unknown;
 }
 
 export interface ImageReadResult {
@@ -62,8 +68,9 @@ export interface ImageReadResult {
   bytes?: number;
   width?: number;
   height?: number;
-  /** For `figure`: the matched label and the rect that was rendered. */
+  /** For `figure`: the matched label, the padding applied (points) and the rect rendered. */
   label?: string;
+  padding?: number;
   rect?: [number, number, number, number];
 }
 
@@ -98,6 +105,7 @@ export class ImageService {
           options.attachmentKey,
           options.figure,
           options.page,
+          options.padding,
         );
       default:
         throw new InvalidArgumentError(
@@ -286,6 +294,7 @@ export class ImageService {
     key: unknown,
     figure: unknown,
     page: unknown,
+    padding: unknown,
   ): Promise<ImageReadResult> {
     const attachment = await this.resolver.resolveAttachment(key);
     if (typeof figure !== "string" || !figure.trim()) {
@@ -297,11 +306,23 @@ export class ImageService {
     const contentType = attachment.attachmentContentType;
 
     // An EPUB has no page geometry to render; its figures are embedded image
-    // files, so the graphic is pulled straight from the EPUB zip.
+    // files, so the graphic is pulled straight from the EPUB zip. The figure
+    // inventory is consulted first: it resolves each caption to a distinct
+    // image, which the nearest-image fallback cannot do when two captions in a
+    // document sit beside the same picture.
     if (contentType === EPUB_CONTENT_TYPE) {
+      const parsed = this.figures.parseLabel(label);
+      let entry: string | undefined;
+      if (parsed) {
+        const listed = await this.gateway.listEpubFigures(attachment);
+        entry =
+          listed.find((f) => f.kind === parsed.kind && f.number === parsed.num)
+            ?.imageEntry ?? undefined;
+      }
       const found = await this.gateway.extractEpubFigureImage(
         attachment,
         label,
+        entry ? { entry } : {},
       );
       if (!found) {
         throw new InvalidArgumentError(
@@ -322,8 +343,14 @@ export class ImageService {
     this.assertPdf(attachment);
     const restrictPage =
       page === undefined || page === null ? undefined : this.pageIndex(page);
+    const margin = this.padding(padding);
 
-    const located = await this.locateFigure(attachment, label, restrictPage);
+    const located = await this.locateFigure(
+      attachment,
+      label,
+      restrictPage,
+      margin,
+    );
     if (!located) {
       throw new InvalidArgumentError(
         `Could not locate "${figure}" in attachment "${attachment.key}". ` +
@@ -350,6 +377,7 @@ export class ImageService {
       attachmentKey: attachment.key,
       label: located.label,
       page: located.pageIndex + 1,
+      padding: margin,
       rect: located.rect,
       mimeType: rendered.mimeType,
       base64: rendered.base64,
@@ -361,13 +389,22 @@ export class ImageService {
   private async locateFigure(
     attachment: Zotero.Item,
     label: string,
-    restrictPage?: number,
+    restrictPage: number | undefined,
+    padding: number,
   ): Promise<{
     label: string;
     pageIndex: number;
     rect: [number, number, number, number];
   } | null> {
-    return this.figures.locate(attachment.id, label, restrictPage);
+    return this.figures.locate(attachment.id, label, restrictPage, padding);
+  }
+
+  /**
+   * The crop margin for a located figure, in PDF points; see
+   * `normalizeFigurePadding` for the default and the accepted range.
+   */
+  private padding(value: unknown): number {
+    return normalizeFigurePadding(value);
   }
 
   private parseRect(rect: unknown): [number, number, number, number] {
@@ -405,12 +442,6 @@ export class ImageService {
   }
 
   private pageIndex(page: unknown): number {
-    const num = Number(page);
-    if (!Number.isInteger(num) || num < 1) {
-      throw new InvalidArgumentError(
-        `"page" must be a 1-based integer page number, got ${JSON.stringify(page)}.`,
-      );
-    }
-    return num - 1;
+    return normalizePageIndex(page);
   }
 }

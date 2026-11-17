@@ -414,7 +414,389 @@ describe("read tools", function () {
         error = e;
       }
       expect(error?.code).to.equal("invalid_argument");
-      expect(error.message).to.include("fulltext, pages, sections or clean");
+      expect(error.message).to.include(
+        "fulltext, pages, sections, clean, figures or tables",
+      );
+    });
+
+    it("inventories figures with captions, pages and rects", async function () {
+      gateway.sdtReader = reader(
+        [
+          {
+            type: "image",
+            anchor: { pageRects: [[3, 100, 600, 500, 750]] },
+            content: [{ text: "chart furniture 0 1 2 3" }],
+          },
+          {
+            type: "caption",
+            anchor: { pageRects: [[3, 100, 560, 500, 595]] },
+            content: [{ text: "Figure 2.1 The GFS architecture" }],
+          },
+          {
+            type: "caption",
+            anchor: { pageRects: [[4, 60, 700, 540, 730]] },
+            content: [{ text: "Table 2.2 Workloads" }],
+          },
+          {
+            type: "table",
+            anchor: { pageRects: [[4, 60, 500, 540, 695]] },
+            content: [{ text: "" }],
+          },
+          {
+            type: "caption",
+            anchor: { pageRects: [[5, 60, 100, 540, 130]] },
+            content: [{ text: "Listing 5 A snippet, not a figure" }],
+          },
+        ],
+        { pages: [{}, {}, {}, {}, {}, {}] },
+      );
+
+      const payload = parse(
+        await call("paper_read", {
+          attachmentKey: "EFGH5678",
+          mode: "figures",
+          padding: 0,
+        }),
+      );
+
+      expect(payload.mode).to.equal("figures");
+      expect(payload.total).to.equal(2);
+      expect(payload.truncated).to.equal(false);
+      expect(payload.figures).to.deep.equal([
+        {
+          label: "Figure 2.1 The GFS architecture",
+          kind: "figure",
+          number: "2.1",
+          page: 4,
+          rect: [100, 560, 500, 750],
+          hasGraphic: true,
+        },
+        {
+          label: "Table 2.2 Workloads",
+          kind: "table",
+          number: "2.2",
+          page: 5,
+          rect: [60, 500, 540, 730],
+          hasGraphic: true,
+        },
+      ]);
+    });
+
+    it("defaults the figure inventory to a padded rect", async function () {
+      gateway.sdtReader = reader(
+        [
+          {
+            type: "image",
+            anchor: { pageRects: [[3, 100, 600, 500, 750]] },
+            content: [{ text: "" }],
+          },
+          {
+            type: "caption",
+            anchor: { pageRects: [[3, 100, 560, 500, 595]] },
+            content: [{ text: "Figure 2.1 The GFS architecture" }],
+          },
+        ],
+        { pages: [{}, {}, {}, {}] },
+      );
+
+      const payload = parse(
+        await call("paper_read", {
+          attachmentKey: "EFGH5678",
+          mode: "figures",
+        }),
+      );
+
+      expect(payload.figures[0].rect).to.deep.equal([94, 554, 506, 756]);
+    });
+
+    it("filters the inventory by page, kind and limit", async function () {
+      const captions = [
+        { page: 0, text: "Figure 1 One" },
+        { page: 1, text: "Figure 2 Two" },
+        { page: 2, text: "Table 3 Three" },
+      ];
+      const blocks: SdtNode[] = [];
+      for (const c of captions) {
+        blocks.push({
+          type: "caption",
+          anchor: { pageRects: [[c.page, 60, 360, 560, 395]] },
+          content: [{ text: c.text }],
+        });
+      }
+      gateway.sdtReader = reader(blocks, {
+        pages: [{}, {}, {}, {}],
+      });
+
+      const onPage = parse(
+        await call("paper_read", {
+          attachmentKey: "EFGH5678",
+          mode: "figures",
+          page: 2,
+        }),
+      );
+      expect(
+        onPage.figures.map((f: { number: string }) => f.number),
+      ).to.deep.equal(["2"]);
+
+      const tables = parse(
+        await call("paper_read", {
+          attachmentKey: "EFGH5678",
+          mode: "figures",
+          only: "tables",
+        }),
+      );
+      expect(
+        tables.figures.map((f: { number: string }) => f.number),
+      ).to.deep.equal(["3"]);
+
+      const cut = parse(
+        await call("paper_read", {
+          attachmentKey: "EFGH5678",
+          mode: "figures",
+          limit: 2,
+        }),
+      );
+      expect(cut.figures).to.have.length(2);
+      expect(cut.total).to.equal(3);
+      expect(cut.truncated).to.equal(true);
+    });
+
+    it("rejects a bad filter value for the figure inventory", async function () {
+      gateway.sdtReader = reader([], { pages: [{}] });
+
+      for (const args of [{ only: "charts" }, { limit: 0 }, { page: 0 }]) {
+        let error: any;
+        try {
+          await call("paper_read", {
+            attachmentKey: "EFGH5678",
+            mode: "figures",
+            ...args,
+          });
+        } catch (e) {
+          error = e;
+        }
+        expect(error?.code).to.equal("invalid_argument");
+      }
+    });
+
+    it("inventories an EPUB's figures by spine document and image entry", async function () {
+      gateway.addItem({
+        key: "EPUBFIG1",
+        id: 9,
+        itemType: "attachment",
+        attachmentContentType: "application/epub+zip",
+      });
+      gateway.epubFigures = [
+        {
+          label: "Figure 1.1 The pipeline",
+          caption: "Figure 1.1 The pipeline",
+          kind: "figure",
+          number: "1.1",
+          spineIndex: 4,
+          href: "OEBPS/ch01.xhtml",
+          imageEntry: "OEBPS/images/fig1-1.png",
+        },
+        {
+          label: "Table 2.3 Results",
+          caption: "Table 2.3 Results",
+          kind: "table",
+          number: "2.3",
+          spineIndex: 9,
+          href: "OEBPS/ch02.xhtml",
+          imageEntry: null,
+        },
+      ];
+
+      const payload = parse(
+        await call("paper_read", {
+          attachmentKey: "EPUBFIG1",
+          mode: "figures",
+        }),
+      );
+
+      expect(gateway.epubFigureListRequests).to.deep.equal(["EPUBFIG1"]);
+      expect(payload.total).to.equal(2);
+      expect(payload.figures[0]).to.deep.equal({
+        label: "Figure 1.1 The pipeline",
+        kind: "figure",
+        number: "1.1",
+        page: null,
+        rect: null,
+        hasGraphic: true,
+        location: { spine: 4, href: "OEBPS/ch01.xhtml" },
+        image: "OEBPS/images/fig1-1.png",
+      });
+      expect(payload.figures[1].hasGraphic).to.equal(false);
+      expect(payload.note).to.equal(undefined);
+    });
+
+    it("filters and caps an EPUB figure list, and explains an empty one", async function () {
+      gateway.addItem({
+        key: "EPUBFIG1",
+        id: 9,
+        itemType: "attachment",
+        attachmentContentType: "application/epub+zip",
+      });
+      gateway.epubFigures = [
+        {
+          label: "Figure 1",
+          caption: "Figure 1",
+          kind: "figure",
+          number: "1",
+          spineIndex: 1,
+          href: "a.xhtml",
+          imageEntry: null,
+        },
+        {
+          label: "Figure 2",
+          caption: "Figure 2",
+          kind: "figure",
+          number: "2",
+          spineIndex: 2,
+          href: "b.xhtml",
+          imageEntry: null,
+        },
+      ];
+
+      const tables = parse(
+        await call("paper_read", {
+          attachmentKey: "EPUBFIG1",
+          mode: "figures",
+          only: "tables",
+        }),
+      );
+      expect(tables.total).to.equal(0);
+      expect(tables.note).to.be.a("string");
+
+      gateway.epubFigures = [];
+      const empty = parse(
+        await call("paper_read", {
+          attachmentKey: "EPUBFIG1",
+          mode: "figures",
+        }),
+      );
+      expect(empty.total).to.equal(0);
+      expect(empty.note).to.include("image_read");
+    });
+
+    it("inventories captioned tables and, on request, uncaptioned ones", async function () {
+      gateway.sdtReader = reader(
+        [
+          {
+            type: "caption",
+            anchor: { pageRects: [[2, 60, 700, 540, 730]] },
+            content: [{ text: "Table 2.1 Workload characteristics" }],
+          },
+          {
+            type: "table",
+            anchor: { pageRects: [[2, 60, 500, 540, 695]] },
+            content: [{ text: "row load hit-rate" }],
+          },
+          {
+            type: "caption",
+            anchor: { pageRects: [[2, 60, 400, 540, 430]] },
+            content: [{ text: "Figure 2.2 Not a table" }],
+          },
+          // An uncaptioned table further down the same page.
+          {
+            type: "table",
+            anchor: { pageRects: [[3, 62, 300, 538, 420]] },
+            content: [{ text: "col a col b 10 20 30 40 hit rate" }],
+          },
+          // Index-like terse block: too short to be a table.
+          {
+            type: "table",
+            anchor: { pageRects: [[3, 62, 120, 200, 130]] },
+            content: [{ text: "242" }],
+          },
+        ],
+        { pages: [{}, {}, {}, {}] },
+      );
+
+      const labelled = parse(
+        await call("paper_read", {
+          attachmentKey: "EFGH5678",
+          mode: "tables",
+          padding: 0,
+        }),
+      );
+      expect(labelled.total).to.equal(1);
+      expect(labelled.captioned).to.equal(1);
+      expect(labelled.tables[0]).to.deep.equal({
+        label: "Table 2.1 Workload characteristics",
+        number: "2.1",
+        page: 3,
+        rect: [60, 500, 540, 730],
+        captioned: true,
+        preview: "Table 2.1 Workload characteristics",
+      });
+
+      const full = parse(
+        await call("paper_read", {
+          attachmentKey: "EFGH5678",
+          mode: "tables",
+          padding: 0,
+          includeUncaptioned: true,
+        }),
+      );
+      expect(full.total).to.equal(2);
+      expect(full.captioned).to.equal(1);
+      expect(
+        full.tables.map((t: { captioned: boolean }) => t.captioned),
+      ).to.deep.equal([true, false]);
+      expect(full.tables[1]).to.deep.equal({
+        label: null,
+        number: null,
+        page: 4,
+        rect: [62, 300, 538, 420],
+        captioned: false,
+        preview: "col a col b 10 20 30 40 hit rate",
+      });
+    });
+
+    it("lists EPUB tables from the book's own captions", async function () {
+      gateway.addItem({
+        key: "EPUBTAB1",
+        id: 11,
+        itemType: "attachment",
+        attachmentContentType: "application/epub+zip",
+      });
+      gateway.epubFigures = [
+        {
+          label: "Figure 1.1 A picture",
+          caption: "Figure 1.1 A picture",
+          kind: "figure",
+          number: "1.1",
+          spineIndex: 2,
+          href: "a.xhtml",
+          imageEntry: "a.png",
+        },
+        {
+          label: "Table 2.1 Results",
+          caption: "Table 2.1 Results",
+          kind: "table",
+          number: "2.1",
+          spineIndex: 5,
+          href: "b.xhtml",
+          imageEntry: null,
+        },
+      ];
+
+      const payload = parse(
+        await call("paper_read", { attachmentKey: "EPUBTAB1", mode: "tables" }),
+      );
+
+      expect(payload.total).to.equal(1);
+      expect(payload.tables[0]).to.deep.equal({
+        label: "Table 2.1 Results",
+        number: "2.1",
+        page: null,
+        rect: null,
+        captioned: true,
+        preview: "Table 2.1 Results",
+        location: { spine: 5, href: "b.xhtml" },
+        image: null,
+      });
     });
 
     it("requires an attachment, not a regular item", async function () {

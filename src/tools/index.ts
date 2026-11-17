@@ -140,19 +140,62 @@ const specs: ToolSpec[] = [
       "selected by title so a late section costs nothing for the earlier ones. " +
       "'clean' extracts the readable article from a web snapshot (HTML) as " +
       "Markdown, dropping navigation and boilerplate and converting math to " +
-      "LaTeX. Output is capped and reports truncation.",
+      "LaTeX. 'figures' inventories the document's figures and tables from the " +
+      "layout model: each labelled caption with its number, page and the " +
+      "page-coordinate rect that image_read's 'figure' source would crop, so a " +
+      "reader can find a figure's label and then read or crop it; for an EPUB, " +
+      "which has no page geometry, each entry instead carries the spine " +
+      "document it lives in and the embedded image it resolves to. 'tables' is " +
+      'the table inventory: every "Table N" caption with its page and rect, ' +
+      "plus, with 'includeUncaptioned', the layout model's own table blocks " +
+      "including books that label their tables as figures. Output is capped and " +
+      "reports truncation.",
     mutability: "read",
     inputSchema: OBJECT_SCHEMA(
       {
         attachmentKey: ITEM_KEY,
         mode: {
           type: "string",
-          enum: ["fulltext", "pages", "sections", "clean"],
+          enum: ["fulltext", "pages", "sections", "clean", "figures", "tables"],
           description: "Default 'fulltext'.",
         },
         pages: {
           type: "string",
           description: "1-based page range for mode 'pages', e.g. '3-5'.",
+        },
+        page: {
+          type: "number",
+          description:
+            "For mode 'figures': list only the figures captioned on this " +
+            "1-based page. PDF only; an EPUB has no pages.",
+        },
+        only: {
+          type: "string",
+          enum: ["figures", "tables"],
+          description:
+            "For mode 'figures': return only figures or only tables. Default " +
+            "both.",
+        },
+        includeUncaptioned: {
+          type: "boolean",
+          description:
+            "For mode 'tables': also list table blocks that carry no caption, " +
+            "flagged captioned false. Off by default, because some books " +
+            "mis-tag index entries and two-column prose as tables.",
+        },
+        limit: {
+          type: "number",
+          description:
+            "For mode 'figures': maximum entries to return (default 200, max " +
+            "1000). The result reports the total found and whether it was cut.",
+        },
+        padding: {
+          type: "number",
+          description:
+            "For mode 'figures': margin in PDF points added around each listed " +
+            "rect, matching image_read's 'padding' for the 'figure' source. " +
+            "Default 6, maximum 72; 0 lists the layout model's exact boxes. " +
+            "PDF only.",
         },
         includeText: {
           type: "boolean",
@@ -288,7 +331,11 @@ const specs: ToolSpec[] = [
       "'region' crops an explicit PDF page rectangle [x1,y1,x2,y2] in user " +
       "space; 'figure' locates a figure or table by label (e.g. 'Figure 1') " +
       "from Zotero's Structured Document Text layout model and crops it (for a " +
-      "PDF), or extracts the embedded image for that figure (for an EPUB).",
+      "PDF), or extracts the embedded image for that figure (for an EPUB). " +
+      "A located figure's crop is the layout model's bounding box plus " +
+      "'padding' points of margin; if the crop clips text at an edge, raise " +
+      "it and read again, and drop it to 0 to get the exact box. The result " +
+      "reports the rect actually rendered.",
     mutability: "read",
     inputSchema: OBJECT_SCHEMA(
       {
@@ -334,6 +381,14 @@ const specs: ToolSpec[] = [
           description:
             "Figure or table label to locate, for the 'figure' source, e.g. " +
             "'Figure 1', 'Fig. 2' or 'Table 3'.",
+        },
+        padding: {
+          type: "number",
+          description:
+            "Margin in PDF points added on every side of a located figure's " +
+            "box, for the 'figure' source. Default 6, maximum 72; 0 returns " +
+            "the layout model's exact box. Increase it when the crop clips a " +
+            "caption or axis label at the edge.",
         },
       },
       ["source"],

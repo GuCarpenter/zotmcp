@@ -6,6 +6,7 @@
 import type {
   ActiveReaderDetails,
   EndpointConstructor,
+  EpubFigureEntry,
   ReadableResult,
   ReaderOpenInput,
   SdtReader,
@@ -166,7 +167,15 @@ export class FakeGateway implements ZoteroGateway {
     width: number;
     height: number;
   } | null = null;
-  public epubFigureRequests: { key: string; label: string }[] = [];
+  /** Page crop box returned by getPdfPageView; null means "page box unknown". */
+  public pageView: [number, number, number, number] | null = null;
+  public pageViewRequests: {
+    itemID: number;
+    pageIndex: number;
+    openIfNeeded: boolean;
+  }[] = [];
+  public epubFigureRequests: { key: string; label: string; entry?: string }[] =
+    [];
   public epubFigureImage: {
     base64: string;
     mimeType: string;
@@ -606,6 +615,19 @@ export class FakeGateway implements ZoteroGateway {
     return this.regionImage;
   }
 
+  public async getPdfPageView(
+    attachmentItemID: number,
+    pageIndex: number,
+    options: { openIfNeeded?: boolean } = {},
+  ): Promise<[number, number, number, number] | null> {
+    this.pageViewRequests.push({
+      itemID: attachmentItemID,
+      pageIndex,
+      openIfNeeded: options.openIfNeeded === true,
+    });
+    return this.pageView;
+  }
+
   public async captureReaderViewport(attachmentItemID: number): Promise<{
     base64: string;
     mimeType: string;
@@ -619,14 +641,29 @@ export class FakeGateway implements ZoteroGateway {
   public async extractEpubFigureImage(
     attachment: Zotero.Item,
     label: string,
+    options: { entry?: string } = {},
   ): Promise<{
     base64: string;
     mimeType: string;
     entry: string;
     label: string;
   } | null> {
-    this.epubFigureRequests.push({ key: attachment.key, label });
+    this.epubFigureRequests.push({
+      key: attachment.key,
+      label,
+      entry: options.entry,
+    });
     return this.epubFigureImage;
+  }
+
+  public epubFigures: EpubFigureEntry[] = [];
+  public epubFigureListRequests: string[] = [];
+
+  public async listEpubFigures(
+    attachment: Zotero.Item,
+  ): Promise<EpubFigureEntry[]> {
+    this.epubFigureListRequests.push(attachment.key);
+    return this.epubFigures;
   }
 
   public async getSdtReader(_itemID: number): Promise<SdtReader | null> {

@@ -435,14 +435,98 @@ describe("imageService", function () {
       expect(result.source).to.equal("figure");
       expect(result.page).to.equal(2);
       expect(result.label).to.include("Figure 1");
-      expect(result.rect).to.deep.equal([100, 560, 500, 750]);
+      // The default margin widens the layout model's box by 6 points a side.
+      expect(result.padding).to.equal(6);
+      expect(result.rect).to.deep.equal([94, 554, 506, 756]);
       expect(result.base64).to.equal("FIGUREBYTES");
       expect(gateway.regionRenders[0]).to.deep.include({
         itemID: 60,
         pageIndex: 1,
         openIfNeeded: true,
       });
-      expect(gateway.regionRenders[0].rect).to.deep.equal([100, 560, 500, 750]);
+      expect(gateway.regionRenders[0].rect).to.deep.equal([94, 554, 506, 756]);
+    });
+
+    it("takes a caller-supplied margin, and 0 for the exact box", async function () {
+      gateway.sdtReader = sdtReader([
+        block("image", "", [1, 100, 600, 500, 750]),
+        block(
+          "caption",
+          "Figure 1: The GFS architecture",
+          [1, 100, 560, 500, 595],
+        ),
+      ]);
+
+      const wide = await service.read({
+        source: "figure",
+        attachmentKey: "PDFFG001",
+        figure: "Figure 1",
+        padding: 20,
+      });
+      expect(wide.padding).to.equal(20);
+      expect(wide.rect).to.deep.equal([80, 540, 520, 770]);
+
+      const exact = await service.read({
+        source: "figure",
+        attachmentKey: "PDFFG001",
+        figure: "Figure 1",
+        padding: 0,
+      });
+      expect(exact.padding).to.equal(0);
+      expect(exact.rect).to.deep.equal([100, 560, 500, 750]);
+    });
+
+    it("clips the padded rect to the page crop box", async function () {
+      gateway.pageView = [0, 0, 520, 760];
+      gateway.sdtReader = sdtReader([
+        block("image", "", [1, 100, 600, 500, 750]),
+        block(
+          "caption",
+          "Figure 1: The GFS architecture",
+          [1, 100, 560, 500, 595],
+        ),
+      ]);
+
+      const result = await service.read({
+        source: "figure",
+        attachmentKey: "PDFFG001",
+        figure: "Figure 1",
+        padding: 20,
+      });
+
+      expect(result.rect).to.deep.equal([80, 540, 520, 760]);
+      expect(gateway.pageViewRequests[0]).to.deep.include({
+        itemID: 60,
+        pageIndex: 1,
+        openIfNeeded: true,
+      });
+      expect(gateway.regionRenders[0].rect).to.deep.equal([80, 540, 520, 760]);
+    });
+
+    it("rejects a negative or huge padding", async function () {
+      gateway.sdtReader = sdtReader([
+        block("image", "", [1, 100, 600, 500, 750]),
+        block(
+          "caption",
+          "Figure 1: The GFS architecture",
+          [1, 100, 560, 500, 595],
+        ),
+      ]);
+
+      for (const padding of [-1, 73, Number.NaN]) {
+        let error: Error | undefined;
+        try {
+          await service.read({
+            source: "figure",
+            attachmentKey: "PDFFG001",
+            figure: "Figure 1",
+            padding,
+          });
+        } catch (e) {
+          error = e as Error;
+        }
+        expect(error?.message).to.include("padding");
+      }
     });
 
     it("matches abbreviated labels like 'Fig. 2'", async function () {
@@ -461,7 +545,7 @@ describe("imageService", function () {
         figure: "Figure 2",
       });
       expect(result.page).to.equal(1);
-      expect(result.rect).to.deep.equal([40, 360, 560, 700]);
+      expect(result.rect).to.deep.equal([34, 354, 566, 706]);
     });
 
     it("locates a table by label", async function () {
@@ -480,7 +564,7 @@ describe("imageService", function () {
         figure: "Table 1",
       });
       expect(result.page).to.equal(3);
-      expect(result.rect).to.deep.equal([60, 500, 540, 730]);
+      expect(result.rect).to.deep.equal([54, 494, 546, 736]);
     });
 
     it("locates a vector chart tagged as a paragraph, not an image", async function () {
@@ -509,8 +593,111 @@ describe("imageService", function () {
       });
 
       expect(result.page).to.equal(5);
-      expect(result.rect).to.deep.equal([68, 107, 846, 573]);
-      expect(gateway.regionRenders[0].rect).to.deep.equal([68, 107, 846, 573]);
+      expect(result.rect).to.deep.equal([62, 101, 852, 579]);
+      expect(gateway.regionRenders[0].rect).to.deep.equal([62, 101, 852, 579]);
+    });
+
+    it("does not follow a short floating label across the page", async function () {
+      // A vendor datasheet: the graphic sits below the caption as a single
+      // image block, and a "Send Feedback" button floats near the page footer.
+      // Short labels pass the chart-text test, so only the gap test keeps them
+      // out — without it the crop stretched over the bullet list between them.
+      gateway.sdtReader = sdtReader([
+        block(
+          "paragraph",
+          "Some highlights of the DSP functionality include:",
+          [0, 162, 182.48, 379.98, 192.17],
+        ),
+        block(
+          "caption",
+          "Figure 1-1: Basic DSP48E1 Slice Functionality",
+          [0, 248.64, 206.2, 471.38, 215.41],
+        ),
+        block(
+          "image",
+          "UG479_c1_21_032111 48-Bit Accumulator/Logic Unit",
+          [0, 166.14, 226.98, 553.86, 416.28],
+        ),
+        block("paragraph", "Send Feedback", [0, 447.24, 20.76, 514.44, 31.81]),
+      ]);
+
+      const result = await service.read({
+        source: "figure",
+        attachmentKey: "PDFFG001",
+        figure: "Figure 1-1",
+        padding: 0,
+      });
+
+      expect(result.page).to.equal(1);
+      expect(result.rect).to.deep.equal([166.14, 206.2, 553.86, 416.28]);
+    });
+
+    it("chains adjacent graphic blocks but stops across a gap", async function () {
+      gateway.sdtReader = sdtReader([
+        block("image", "", [0, 100, 600, 500, 640]),
+        block("image", "", [0, 100, 560, 500, 596]),
+        block(
+          "caption",
+          "Figure 3 Two stacked panels",
+          [0, 100, 520, 500, 547],
+        ),
+        block("image", "", [0, 100, 100, 500, 160]),
+      ]);
+
+      const result = await service.read({
+        source: "figure",
+        attachmentKey: "PDFFG001",
+        figure: "Figure 3",
+        padding: 0,
+      });
+
+      // Both panels above the caption are within a gap of it; the panel far
+      // below is not, so the box stops at the caption.
+      expect(result.rect).to.deep.equal([100, 520, 500, 640]);
+    });
+
+    it("gathers a two-panel figure from its (a)/(b) sub-captions", async function () {
+      // A textbook figure: artwork above, then two side-by-side panel captions,
+      // then the figure caption, then prose. The panel captions carry no
+      // figure/table label, so they are part of the figure and the run keeps
+      // going through them to the artwork.
+      gateway.sdtReader = sdtReader([
+        block(
+          "caption",
+          "(a) Lines meet at x = 2, y = 3",
+          [13, 110.23, 217.99, 265.98, 229.96],
+        ),
+        block(
+          "paragraph",
+          "bb b b b ( − 3, 3) ( − 1, 1) (2, 1) = column 1 (4, −4)",
+          [13, 314.67, 281.79, 517.28, 372.95],
+        ),
+        block(
+          "caption",
+          "(b) Columns combine with 2 and 3",
+          [13, 327.75, 217.99, 507.09, 229.96],
+        ),
+        block(
+          "caption",
+          "Figure 1.2: Row picture (two lines) and column picture (combine columns).",
+          [13, 160.7, 189.91, 465.66, 200.37],
+        ),
+        block(
+          "paragraph",
+          "The second approach looks at the columns of the linear system. The two vectors are multiplied by the unknowns.",
+          [13, 86.34, 131.06, 539.88, 161.5],
+        ),
+      ]);
+
+      const result = await service.read({
+        source: "figure",
+        attachmentKey: "PDFFG001",
+        figure: "Figure 1.2",
+        padding: 0,
+      });
+
+      expect(result.rect).to.deep.equal([110.23, 189.91, 517.28, 372.95]);
+      expect(result.page).to.equal(14);
     });
 
     it("does not sweep in a prose paragraph as figure media", async function () {
@@ -532,7 +719,7 @@ describe("imageService", function () {
         attachmentKey: "PDFFG001",
         figure: "Figure 9",
       });
-      expect(result.rect).to.deep.equal([60, 360, 560, 395]);
+      expect(result.rect).to.deep.equal([54, 354, 566, 401]);
     });
 
     it("errors when no layout model is available", async function () {
@@ -577,8 +764,56 @@ describe("imageService", function () {
       expect(result.base64).to.equal("EPUBIMG");
       expect(result.label).to.equal("Figure 3.5");
       expect(gateway.epubFigureRequests).to.deep.equal([
-        { key: "EPUBFG01", label: "Figure 3.5" },
+        { key: "EPUBFG01", label: "Figure 3.5", entry: undefined },
       ]);
+    });
+
+    it("prefers the image the figure inventory resolved for that label", async function () {
+      gateway.addItem({
+        key: "EPUBFG01",
+        id: 70,
+        itemType: "attachment",
+        attachmentContentType: "application/epub+zip",
+      });
+      // Two captions in one document sit beside the same picture, so the plain
+      // nearest-image search would hand both the same file; the inventory knows
+      // which image belongs to the table.
+      gateway.epubFigures = [
+        {
+          label: "Figure 1.1 Subset covered in the book.",
+          caption: "Figure 1.1 Subset covered in the book.",
+          kind: "figure",
+          number: "1.1",
+          spineIndex: 8,
+          href: "OEBPS/ch01.xhtml",
+          imageEntry: "OEBPS/Images/image00397.jpeg",
+        },
+        {
+          label: "Table 1.1 Truth table of 1-bit equality comparator.",
+          caption: "Table 1.1 Truth table of 1-bit equality comparator.",
+          kind: "table",
+          number: "1.1",
+          spineIndex: 8,
+          href: "OEBPS/ch01.xhtml",
+          imageEntry: "OEBPS/Images/image00398.jpeg",
+        },
+      ];
+      gateway.epubFigureImage = {
+        base64: "EPUBIMG",
+        mimeType: "image/jpeg",
+        entry: "OEBPS/Images/image00398.jpeg",
+        label: "Table 1.1",
+      };
+
+      await service.read({
+        source: "figure",
+        attachmentKey: "EPUBFG01",
+        figure: "Table 1.1",
+      });
+
+      expect(gateway.epubFigureRequests[0].entry).to.equal(
+        "OEBPS/Images/image00398.jpeg",
+      );
     });
 
     it("errors when an EPUB figure label cannot be located", async function () {
