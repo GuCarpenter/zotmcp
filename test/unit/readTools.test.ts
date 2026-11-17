@@ -579,6 +579,43 @@ describe("read tools", function () {
       }
     });
 
+    it("lists figure rects without the caption on request", async function () {
+      gateway.sdtReader = reader(
+        [
+          {
+            type: "image",
+            anchor: { pageRects: [[3, 100, 600, 500, 750]] },
+            content: [{ text: "" }],
+          },
+          {
+            type: "caption",
+            anchor: { pageRects: [[3, 100, 560, 500, 595]] },
+            content: [{ text: "Figure 2.1 The GFS architecture" }],
+          },
+        ],
+        { pages: [{}, {}, {}, {}] },
+      );
+
+      const withCaption = parse(
+        await call("paper_read", {
+          attachmentKey: "EFGH5678",
+          mode: "figures",
+          padding: 0,
+        }),
+      );
+      expect(withCaption.figures[0].rect).to.deep.equal([100, 560, 500, 750]);
+
+      const bare = parse(
+        await call("paper_read", {
+          attachmentKey: "EFGH5678",
+          mode: "figures",
+          padding: 0,
+          includeCaption: false,
+        }),
+      );
+      expect(bare.figures[0].rect).to.deep.equal([100, 600, 500, 750]);
+    });
+
     it("inventories an EPUB's figures by spine document and image entry", async function () {
       gateway.addItem({
         key: "EPUBFIG1",

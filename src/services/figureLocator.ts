@@ -37,11 +37,25 @@ export interface LocatedFigure {
   hasGraphic: boolean;
 }
 
+export interface FigureLocateOptions {
+  /** Only consider captions on this 0-based page. */
+  restrictPage?: number;
+  /** Margin in PDF points around the rect, clamped to the page crop box. */
+  padding?: number;
+  /** Include the caption text in the rect. Default true. */
+  includeCaption?: boolean;
+}
+
 export interface FigureListOptions {
   /** Only captions on this 0-based page. */
   restrictPage?: number;
   /** Margin in PDF points around each rect, clamped to the page crop box. */
   padding?: number;
+  /**
+   * Include the caption in each rect. Default true; false reports the graphic
+   * alone, which is what a reader who wants a bare picture asks for.
+   */
+  includeCaption?: boolean;
   /** Return only figures or only tables. */
   kind?: FigureKind;
   /** Stop after this many entries; the result reports what was left out. */
@@ -77,6 +91,8 @@ export interface TableListOptions {
   restrictPage?: number;
   /** Margin in PDF points around each rect, clamped to the page crop box. */
   padding?: number;
+  /** Include the table's caption in its rect. Default true. */
+  includeCaption?: boolean;
   /**
    * Also list tables the layout model tagged as `table` but that carry no
    * caption. Off by default: some books mis-tag index entries and two-column
@@ -128,13 +144,12 @@ export class FigureLocator {
    * Finds the caption block for `label` and returns the page-coordinate rect
    * covering the caption plus its graphic. `padding` widens that rect by the
    * given number of PDF points on each side, clamped to the page crop box;
-   * 0 returns the raw union.
+   * `includeCaption: false` drops the caption text from the rect.
    */
   public async locate(
     attachmentItemID: number,
     label: string,
-    restrictPage?: number,
-    padding = 0,
+    options: FigureLocateOptions = {},
   ): Promise<LocatedFigure | null> {
     const parsedLabel = this.parseLabel(label);
     if (!parsedLabel) return null;
@@ -153,7 +168,11 @@ export class FigureLocator {
         i,
         block,
         parsedLabel,
-        { restrictPage, padding },
+        {
+          restrictPage: options.restrictPage,
+          padding: options.padding ?? 0,
+          includeCaption: options.includeCaption,
+        },
       );
       if (figure) return figure;
     }
@@ -198,6 +217,7 @@ export class FigureLocator {
         {
           restrictPage: options.restrictPage,
           padding: options.padding ?? 0,
+          includeCaption: options.includeCaption,
         },
       );
       if (!figure) continue;
@@ -264,7 +284,11 @@ export class FigureLocator {
         i,
         block,
         parsed,
-        { restrictPage: options.restrictPage, padding: options.padding ?? 0 },
+        {
+          restrictPage: options.restrictPage,
+          padding: options.padding ?? 0,
+          includeCaption: options.includeCaption,
+        },
       );
       if (!figure) continue;
 
@@ -354,7 +378,11 @@ export class FigureLocator {
     index: number,
     block: SdtNode,
     parsed: { kind: FigureKind; num: string },
-    options: { restrictPage?: number; padding: number },
+    options: {
+      restrictPage?: number;
+      padding: number;
+      includeCaption?: boolean;
+    },
   ): Promise<LocatedFigure | null> {
     const captionPage = this.blockPageIndex(block);
     if (
@@ -374,8 +402,17 @@ export class FigureLocator {
     const pageIndex = captionPage ?? this.blockPageIndex(media[0] ?? block);
     if (pageIndex === undefined) return null;
 
-    const rects = [...this.pageRectsOnPage(block, pageIndex)];
-    for (const m of media) rects.push(...this.pageRectsOnPage(m, pageIndex));
+    const captionRects = this.pageRectsOnPage(block, pageIndex);
+    const mediaRects: [number, number, number, number][] = [];
+    for (const m of media)
+      mediaRects.push(...this.pageRectsOnPage(m, pageIndex));
+
+    // A caller that wants the bare picture drops the caption from the union.
+    // With no graphic to fall back on the caption is all there is, so it stays.
+    const rects =
+      options.includeCaption === false && mediaRects.length
+        ? mediaRects
+        : [...captionRects, ...mediaRects];
     if (!rects.length) return null;
 
     const caption = this.nodeText(block);

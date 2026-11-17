@@ -313,7 +313,7 @@ export class AnnotationService {
     const located = await this.figures.locate(
       attachment.id,
       input.figure.trim(),
-      restrictPage,
+      { restrictPage },
     );
     if (!located) {
       throw new InvalidArgumentError(

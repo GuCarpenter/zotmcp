@@ -283,6 +283,7 @@ export async function paperRead(
             ? undefined
             : normalizePageIndex(args.page),
         padding: normalizeFigurePadding(args.padding),
+        includeCaption: args.includeCaption !== false,
         kind,
         limit,
       });
@@ -339,6 +340,7 @@ export async function paperRead(
             ? undefined
             : normalizePageIndex(args.page),
         padding: normalizeFigurePadding(args.padding),
+        includeCaption: args.includeCaption !== false,
         includeUncaptioned: args.includeUncaptioned === true,
         limit: normalizeFigureLimit(args.limit),
       });
@@ -549,6 +551,7 @@ export async function imageRead(
     rect: args.rect,
     figure: args.figure,
     padding: args.padding,
+    includeCaption: args.includeCaption,
   });
 
   const { base64, mimeType, ...metadata } = result;

@@ -529,6 +529,58 @@ describe("imageService", function () {
       }
     });
 
+    it("crops the graphic alone when the caption is excluded", async function () {
+      gateway.sdtReader = sdtReader([
+        block("image", "", [1, 100, 600, 500, 750]),
+        block(
+          "caption",
+          "Figure 1: The GFS architecture",
+          [1, 100, 560, 500, 595],
+        ),
+      ]);
+
+      const bare = await service.read({
+        source: "figure",
+        attachmentKey: "PDFFG001",
+        figure: "Figure 1",
+        padding: 0,
+        includeCaption: false,
+      });
+
+      expect(bare.includeCaption).to.equal(false);
+      expect(bare.rect).to.deep.equal([100, 600, 500, 750]);
+      expect(gateway.regionRenders[0].rect).to.deep.equal([100, 600, 500, 750]);
+
+      const withCaption = await service.read({
+        source: "figure",
+        attachmentKey: "PDFFG001",
+        figure: "Figure 1",
+        padding: 0,
+      });
+      expect(withCaption.includeCaption).to.equal(true);
+      expect(withCaption.rect).to.deep.equal([100, 560, 500, 750]);
+    });
+
+    it("keeps the caption when there is no graphic to crop instead", async function () {
+      gateway.sdtReader = sdtReader([
+        block(
+          "caption",
+          "Figure 9 Something with no adjacent graphic.",
+          [0, 60, 360, 560, 395],
+        ),
+      ]);
+
+      const result = await service.read({
+        source: "figure",
+        attachmentKey: "PDFFG001",
+        figure: "Figure 9",
+        padding: 0,
+        includeCaption: false,
+      });
+
+      expect(result.rect).to.deep.equal([60, 360, 560, 395]);
+    });
+
     it("matches abbreviated labels like 'Fig. 2'", async function () {
       gateway.sdtReader = sdtReader([
         block("image", "", [0, 40, 400, 560, 700]),

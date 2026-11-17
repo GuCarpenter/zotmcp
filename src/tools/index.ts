@@ -176,6 +176,13 @@ const specs: ToolSpec[] = [
             "For mode 'figures': return only figures or only tables. Default " +
             "both.",
         },
+        includeCaption: {
+          type: "boolean",
+          description:
+            "For modes 'figures' and 'tables': include the caption in each " +
+            "listed rect, matching image_read's 'includeCaption'. Default " +
+            "true; false reports the graphic alone. PDF only.",
+        },
         includeUncaptioned: {
           type: "boolean",
           description:
@@ -389,6 +396,14 @@ const specs: ToolSpec[] = [
             "box, for the 'figure' source. Default 6, maximum 72; 0 returns " +
             "the layout model's exact box. Increase it when the crop clips a " +
             "caption or axis label at the edge.",
+        },
+        includeCaption: {
+          type: "boolean",
+          description:
+            "For the 'figure' source: crop the caption text in with the " +
+            "graphic. Default true; set false for the bare picture, e.g. when " +
+            "the caption will be cited as text instead. An EPUB figure is " +
+            "always the embedded image alone.",
         },
       },
       ["source"],

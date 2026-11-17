@@ -55,6 +55,11 @@ export interface ImageReadOptions {
    * Defaults to `DEFAULT_FIGURE_PADDING`; 0 keeps the raw ink-tight union.
    */
   padding?: unknown;
+  /**
+   * Include the caption text in a located figure's crop, for the `figure`
+   * source. Default true; false crops the graphic alone.
+   */
+  includeCaption?: unknown;
 }
 
 export interface ImageReadResult {
@@ -68,9 +73,11 @@ export interface ImageReadResult {
   bytes?: number;
   width?: number;
   height?: number;
-  /** For `figure`: the matched label, the padding applied (points) and the rect rendered. */
+  /** For `figure`: the matched label, the padding applied (points), whether the
+   * caption was cropped in, and the rect rendered. */
   label?: string;
   padding?: number;
+  includeCaption?: boolean;
   rect?: [number, number, number, number];
 }
 
@@ -106,6 +113,7 @@ export class ImageService {
           options.figure,
           options.page,
           options.padding,
+          options.includeCaption,
         );
       default:
         throw new InvalidArgumentError(
@@ -295,6 +303,7 @@ export class ImageService {
     figure: unknown,
     page: unknown,
     padding: unknown,
+    includeCaption: unknown,
   ): Promise<ImageReadResult> {
     const attachment = await this.resolver.resolveAttachment(key);
     if (typeof figure !== "string" || !figure.trim()) {
@@ -345,12 +354,11 @@ export class ImageService {
       page === undefined || page === null ? undefined : this.pageIndex(page);
     const margin = this.padding(padding);
 
-    const located = await this.locateFigure(
-      attachment,
-      label,
+    const located = await this.locateFigure(attachment, label, {
       restrictPage,
-      margin,
-    );
+      padding: margin,
+      includeCaption: includeCaption !== false,
+    });
     if (!located) {
       throw new InvalidArgumentError(
         `Could not locate "${figure}" in attachment "${attachment.key}". ` +
@@ -378,6 +386,7 @@ export class ImageService {
       label: located.label,
       page: located.pageIndex + 1,
       padding: margin,
+      includeCaption: includeCaption !== false,
       rect: located.rect,
       mimeType: rendered.mimeType,
       base64: rendered.base64,
@@ -389,14 +398,17 @@ export class ImageService {
   private async locateFigure(
     attachment: Zotero.Item,
     label: string,
-    restrictPage: number | undefined,
-    padding: number,
+    options: {
+      restrictPage: number | undefined;
+      padding: number;
+      includeCaption: boolean;
+    },
   ): Promise<{
     label: string;
     pageIndex: number;
     rect: [number, number, number, number];
   } | null> {
-    return this.figures.locate(attachment.id, label, restrictPage, padding);
+    return this.figures.locate(attachment.id, label, options);
   }
 
   /**
